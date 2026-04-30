@@ -1,3 +1,4 @@
-ortools
+streamlit
 pandas
+ortools
 openpyxl
