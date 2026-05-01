@@ -537,10 +537,10 @@ def get_color_style(val):
         return base_style + 'background-color: #FFE6CC; color: black;' 
     elif val_str == 'พัก':
         return base_style + 'background-color: #F8CECC; color: black;' 
-    elif val_str in ['-', 'ว่าง']: # 🌟 ลบ 'ลา' ออก เพื่อให้ตกไปที่ else
+    elif val_str in ['-', 'ว่าง']: 
         return base_style + 'background-color: #F5F5F5; color: black;' 
     else:
-        return base_style + 'background-color: #E6E6E6; color: black;' # 🌟 'ลา' และ 'งานเฉพาะ' จะเป็นสีนี้ (เทาเข้ม)
+        return base_style + 'background-color: #E6E6E6; color: black;' 
 
 # ==========================================
 # 📸 ฟังก์ชันสร้าง HTML Table สำหรับ PNG
@@ -562,9 +562,10 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif 'Ver PS' in val_str: bg = "#E1D5E7"
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
-        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" # 🌟 ลบ 'ลา' ออก ให้ใช้ #E6E6E6 แบบ default
+        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
         
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 8px 5px; text-align: center; font-size: 14px; white-space: nowrap;"
+        # 🌟 บังคับความสูงแถวข้อมูลเป็น 30px (บวก padding บน-ล่าง) 🌟
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 2px 5px; text-align: center; font-size: 14px; white-space: nowrap; height: 30px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
@@ -599,11 +600,12 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         bg = "#FFFFFF"
         if i >= 1:
             bg = get_head_color_hex(i - 1, DAY_OF_WEEK)
-        html += f'<th style="background-color: {bg}; border: 1px solid black; padding: 10px 5px; font-size: 15px; white-space: nowrap;">{col}</th>'
+        # 🌟 บังคับความสูงแถวเวลา (หัวตาราง) เป็น 40px 🌟
+        html += f'<th style="background-color: {bg}; border: 1px solid black; padding: 5px; font-size: 15px; white-space: nowrap; height: 40px; box-sizing: border-box;">{col}</th>'
     html += "</tr>"
     
     for _, row in df.iterrows():
-        html += "<tr>"
+        html += "<tr style='height: 30px;'>"
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
@@ -636,7 +638,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 112 27/04/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 114 01/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -818,10 +820,13 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         styled_df.to_excel(writer, index=False, sheet_name='Schedule', startrow=2)
         
         worksheet = writer.sheets['Schedule']
+        
+        # 🌟 ตั้งค่าหน้ากระดาษ (Fit to Page) ให้พร้อมปริ้นต์แบบเป๊ะๆ 🌟
+        worksheet.sheet_properties.pageSetUpPr.fitToPage = True
         worksheet.page_setup.orientation = worksheet.ORIENTATION_LANDSCAPE
         worksheet.page_setup.paperSize = worksheet.PAPERSIZE_A4
         worksheet.page_setup.fitToWidth = 1 
-        worksheet.page_setup.fitToHeight = 0 
+        worksheet.page_setup.fitToHeight = 1 
         
         cm_to_inch = 0.4 / 2.54
         worksheet.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
@@ -838,7 +843,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         worksheet['A2'].font = Font(name='TH SarabunPSK', size=18, bold=True)
         worksheet['A2'].alignment = Alignment(horizontal="center", vertical="center")
         
-        # 🌟 ปรับความสูงแถวเวลาเป็น 40px 🌟
+        # 🌟 ปรับความสูงแถว 3 = 40px 🌟
         worksheet.row_dimensions[3].height = 40
         center_aligned_text = Alignment(horizontal="center", vertical="center")
         
@@ -848,10 +853,13 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
             worksheet.column_dimensions[col_letter].width = 11.5 
             
             for row_idx in range(3, len(df_to_show) + 4): 
+                # 🌟 ปรับความสูงแถว 4 เป็นต้นไป = 30px 🌟
+                if row_idx >= 4:
+                    worksheet.row_dimensions[row_idx].height = 30
+                    
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 cell.alignment = center_aligned_text
                 
-                # 🌟 ปรับสีตัวอักษร Match ให้เป็นสีแดง ในไฟล์ Excel 🌟
                 cell_val_str = str(cell.value)
                 is_bold = True if (cell.row == 3 or cell.column == 1) else False
                 
@@ -883,7 +891,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
     
-    # 🌟 ขยับปุ่ม PNG ให้ชิดและลบข้อความ Loading ออก 🌟
     full_html = f"""
     <!DOCTYPE html>
     <html>
