@@ -371,6 +371,21 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 5) 
 
+    # 🌟 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint) 🌟
+    for p in all_pharmacists:
+        for t in range(14):
+            is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
+            is_disp_t1 = sum(x[p, t+1, d] for d in dispensing_tasks)
+            is_disp_t2 = sum(x[p, t+2, d] for d in dispensing_tasks)
+            
+            too_long = model.NewBoolVar(f'too_long_disp_{p}_{t}')
+            model.Add(is_disp_t + is_disp_t1 + is_disp_t2 <= 2 + too_long)
+            reward_vars.append(too_long * -100000) 
+            
+            short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
+            model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
+            reward_vars.append(short_break * -100000)
+
     # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม.
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
@@ -416,7 +431,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16): 
             reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
-    # 🌟 9. ดัน Priority จ่ายยาแบบทะลุเพดาน (บังคับ AI ทิ้ง Ver ถ้าช่องจ่ายว่าง) 🌟
+    # 🌟 9. ดัน Priority จ่ายยาแบบทะลุเพดาน 🌟
     for t in range(16):
         weights = {
             'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
@@ -502,7 +517,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         return None, "Infeasible", "จำนวนคนไม่เพียงพอต่อการจัดตาราง หรือเงื่อนไขตึงเกินไปครับ"
 
 # ==========================================
-# 🎨 ฟังก์ชันใส่สีพื้นหลัง (พร้อมจัดกึ่งกลาง)
+# 🎨 ฟังก์ชันใส่สีพื้นหลังเว็บ
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
@@ -522,13 +537,13 @@ def get_color_style(val):
         return base_style + 'background-color: #FFE6CC; color: black;' 
     elif val_str == 'พัก':
         return base_style + 'background-color: #F8CECC; color: black;' 
-    elif val_str in ['-', 'ว่าง', 'ลา']:
+    elif val_str in ['-', 'ว่าง']: # 🌟 ลบ 'ลา' ออก เพื่อให้ตกไปที่ else
         return base_style + 'background-color: #F5F5F5; color: black;' 
     else:
-        return base_style + 'background-color: #E6E6E6; color: black;' 
+        return base_style + 'background-color: #E6E6E6; color: black;' # 🌟 'ลา' และ 'งานเฉพาะ' จะเป็นสีนี้ (เทาเข้ม)
 
 # ==========================================
-# 📸 ฟังก์ชันสร้าง HTML Table สำหรับ PNG (ซ่อนไว้)
+# 📸 ฟังก์ชันสร้าง HTML Table สำหรับ PNG
 # ==========================================
 def build_html_table(df, selected_date, DAY_OF_WEEK):
     thai_date_str = get_thai_date(selected_date)
@@ -547,7 +562,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif 'Ver PS' in val_str: bg = "#E1D5E7"
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
-        elif val_str in ['-', 'ว่าง', 'ลา']: bg = "#F5F5F5"
+        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" # 🌟 ลบ 'ลา' ออก ให้ใช้ #E6E6E6 แบบ default
         
         return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 8px 5px; text-align: center; font-size: 14px; white-space: nowrap;"
         
@@ -615,12 +630,13 @@ st.markdown("""
     .stMarkdown h3 { margin-top: -0.5rem !important; padding-bottom: 0rem !important; margin-bottom: 0.2rem !important; }
     .stMarkdown p { margin-bottom: 0.5rem !important; }
     th { text-align: center !important; }
+    hr { margin-top: 0.5rem; margin-bottom: 0.5rem; border-color: #e0e0e0; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 108 27/04/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 112 27/04/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -761,31 +777,32 @@ with st.sidebar:
                 elif "รอบที่ 2" in t_b: fix_breaks_input[p_b] = 1
                 elif "รอบที่ 3" in t_b: fix_breaks_input[p_b] = 2
 
-st.divider()
+st.markdown("<hr>", unsafe_allow_html=True)
 
-if st.button("🚀 สร้างตารางปฏิบัติงาน (คลิก)", type="primary", use_container_width=True):
-    status_text = st.empty()
-    status_text.info("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)")
-    
-    try:
-        df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input)
-        status_text.empty()
-        
-        if status == "Success":
-            st.session_state.schedule_df = df_result
-            st.session_state.run_status = "Success"
-        else:
-            st.error(f"⚠️ {msg}")
-            st.session_state.schedule_df = None
-            st.session_state.run_status = status
+# ==========================================
+# 🌟 ปุ่มรัน AI + ข้อความแบบคลีน 🌟
+# ==========================================
+if st.button("🚀 เริ่มจัดตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
+    with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
+        try:
+            df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input)
             
-    except Exception as e:
-        status_text.empty()
-        st.error(f"❌ เกิดข้อผิดพลาดในระบบ Python: {str(e)}")
+            if status == "Success":
+                st.session_state.schedule_df = df_result
+                st.session_state.run_status = "Success"
+            else:
+                st.error(f"⚠️ {msg}")
+                st.session_state.schedule_df = None
+                st.session_state.run_status = status
+                
+        except Exception as e:
+            st.error(f"❌ เกิดข้อผิดพลาดในระบบ Python: {str(e)}")
 
-# แสดงผลแบบมีสีสันและจัดกึ่งกลาง
+# ==========================================
+# แสดงผลตาราง และปุ่ม Export
+# ==========================================
 if st.session_state.schedule_df is not None and st.session_state.run_status == "Success":
-    st.success("🎉 สำเร็จ! นี่คือตารางของคุณ กดดาวน์โหลดไฟล์ด้านล่างได้เลยครับ")
+    st.success("🎉 นี่คือตารางของคุณ ตรวจสอบความถูกต้องและดาวน์โหลดได้เลยครับ")
     
     df_to_show = st.session_state.schedule_df
     
@@ -821,7 +838,8 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         worksheet['A2'].font = Font(name='TH SarabunPSK', size=18, bold=True)
         worksheet['A2'].alignment = Alignment(horizontal="center", vertical="center")
         
-        worksheet.row_dimensions[3].height = 35
+        # 🌟 ปรับความสูงแถวเวลาเป็น 40px 🌟
+        worksheet.row_dimensions[3].height = 40
         center_aligned_text = Alignment(horizontal="center", vertical="center")
         
         num_columns = len(df_to_show.columns)
@@ -832,8 +850,18 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
             for row_idx in range(3, len(df_to_show) + 4): 
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 cell.alignment = center_aligned_text
+                
+                # 🌟 ปรับสีตัวอักษร Match ให้เป็นสีแดง ในไฟล์ Excel 🌟
+                cell_val_str = str(cell.value)
                 is_bold = True if (cell.row == 3 or cell.column == 1) else False
-                cell.font = Font(name='TH SarabunPSK', size=18, bold=is_bold)
+                
+                if "Match" in cell_val_str and cell_val_str in ["Match + C", "Match + C2"]:
+                    cell.font = Font(name='TH SarabunPSK', size=18, bold=True, color="FF0000")
+                elif '/' in cell_val_str and '-' in cell_val_str and cell_val_str[0].isdigit():
+                    cell.font = Font(name='TH SarabunPSK', size=18, bold=True)
+                else:
+                    cell.font = Font(name='TH SarabunPSK', size=18, bold=is_bold)
+                    
                 cell.border = thin_border
                 
                 if cell.row == 3 and col_idx >= 2:
@@ -842,20 +870,20 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                     if color_name:
                         cell.fill = header_color_map[color_name]
     
-    # 🌟 1. ปุ่มโหลด Excel (ใช้ความกว้างเต็มจอเหมือนปุ่มสร้างตาราง) 🌟
     st.markdown("<br/>", unsafe_allow_html=True)
+    
     st.download_button(
         label="📥 ดาวน์โหลดเป็นไฟล์ Excel",
         data=buffer.getvalue(),
         file_name=f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True # เปิดใช้งานความกว้างเต็มจอ
+        use_container_width=True 
     )
 
-    # 🌟 2. ปุ่มโหลด PNG (ตั้งค่า CSS ให้กว้าง 100% จัดวางต่อกันพอดี) 🌟
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
     
+    # 🌟 ขยับปุ่ม PNG ให้ชิดและลบข้อความ Loading ออก 🌟
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -870,7 +898,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 background: transparent; 
             }}
             .btn {{
-                width: 100%; /* ให้ปุ่มกว้างเต็มพื้นที่ iframe */
+                width: 100%; 
                 background-color: #f0f2f6; 
                 color: #31333F; 
                 padding: 0.5rem 1rem; 
@@ -883,7 +911,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 line-height: 1.6;
                 transition: all 0.2s ease;
                 display: block; 
-                box-sizing: border-box; /* ป้องกันปุ่มล้นขอบ */
+                box-sizing: border-box; 
             }}
             .btn:hover {{ 
                 border-color: #FF4B4B; 
@@ -894,7 +922,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     </head>
     <body>
         <button class="btn" onclick="takeShot()">📸 บันทึกเป็นรูปภาพ (PNG)</button>
-        <span id="loading" style="display:none; margin-top: 5px; font-size: 14px; color: #555; text-align: center; display: block;">⏳ กำลังสร้างรูปภาพ...</span>
         
         <div id="capture-area-wrapper">
             {html_table}
@@ -902,20 +929,17 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         
         <script>
             function takeShot() {{
-                document.getElementById('loading').style.display = 'block';
                 const target = document.getElementById('capture-area');
                 html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{
                     let link = document.createElement('a');
                     link.download = '{file_name_png}';
                     link.href = canvas.toDataURL('image/png');
                     link.click();
-                    document.getElementById('loading').style.display = 'none';
                 }});
             }}
         </script>
     </body>
     </html>
     """
-    # ปรับ margin-top ให้ติดกับปุ่ม Excel พอดี
-    st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
-    components.html(full_html, height=70, scrolling=False)
+    st.markdown("<div style='margin-top: -15px;'></div>", unsafe_allow_html=True)
+    components.html(full_html, height=50, scrolling=False)
