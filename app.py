@@ -262,7 +262,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
     
-    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ (พร้อมเงื่อนไขพิเศษช่วงพักของวัน จ. พ. ศ.)
+    # 5. กฎจำกัดจำนวนคนต่อหน้าที่
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -276,13 +276,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         else: 
             req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             
-        if IS_MWF and (t in break_slots):
-            if 'Ver_1' in req_core:
-                req_core.remove('Ver_1')
-            model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'Ver_1'] for p in all_pharmacists) == 0)
-
+        # ลบเงื่อนไขการตัด Ver 1 ออกแล้วครับ
         for task in req_core:
             model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
@@ -305,7 +299,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
         model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists))
 
-    # 6. กฎป้องกันการสลับช่องจ่ายยา (ป้องกันการย้ายช่องไปมาในหมวดเดิม)
+    # 6. กฎป้องกันการสลับช่องจ่ายยา
     categories_to_prevent_internal_switch = [dispensing_tasks]
     for p in all_pharmacists:
         for t in range(15):
@@ -315,14 +309,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                         if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
     # 🌟 7. กฎ 1 ชั่วโมงเฉพาะงานหลัก (บังคับใช้เฉพาะ Full-Time) 🌟
-    # ต้องไม่ทำหน้าที่หลักเดิมติดกันเกิน 1 ชั่วโมง (2 ช่อง)
     restricted_categories = [
         dispensing_tasks,
-        ['Ver_1', 'Ver_2', 'Ver_3'], # กลุ่ม Ver หลัก
-        ['PS_1'],                    # กลุ่ม PS หลัก
-        ['Match_C', 'Match_C2']      # กลุ่ม Match
+        ['Ver_1', 'Ver_2', 'Ver_3'], 
+        ['PS_1'],                    
+        ['Match_C', 'Match_C2']      
     ]
-    for p in ft_pharmacists: # 🚨 เฉพาะ Full-Time (เว้น PT ไว้)                    
+    for p in ft_pharmacists: 
         for cat in restricted_categories:
             for t in range(14):
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
@@ -379,28 +372,26 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         
-        # 🌟 ลดความแข็งของกฎช่อง 7/8 (ป้องกัน Infeasible วันที่คนน้อย) 🌟
         both_7_8 = model.NewBoolVar(f'both_7_8_{p}')
         model.Add(done_disp_7 + done_disp_8 <= 1 + both_7_8)
-        reward_vars.append(both_7_8 * -500000) # ยอมให้ทำได้ถ้าคนไม่พอจริงๆ แต่โดนหักคะแนนยับเยิน
+        reward_vars.append(both_7_8 * -500000)
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
 
     model.Add(sum(is_disp_7_vars) <= 5) 
 
     # 🌟 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (เฉพาะ Full-Time) 🌟
-    for p in ft_pharmacists: # 🚨 เฉพาะ Full-Time (เว้น PT ไว้)
+    for p in ft_pharmacists: 
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
             is_disp_t1 = sum(x[p, t+1, d] for d in dispensing_tasks)
             is_disp_t2 = sum(x[p, t+2, d] for d in dispensing_tasks)
             
-            # โดนหักแต้มถ้าจ่ายยาแล้วพักแค่ 30 นาที แล้วกลับมาจ่ายใหม่
             short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 🌟 8. ระบบ Scoring เพื่อจัดให้งานหลักเป็นบล็อก 1 ชม. (ปลด Hard Limit 30 นาทีทิ้ง) 🌟
+    # 8. ระบบ Scoring เพื่อจัดให้งานหลักเป็นบล็อก 1 ชม.
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
@@ -413,14 +404,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                         model.AddImplication(match_var, x[p, t+1, task])
                         reward_vars.append(match_var * 500000) 
                     
-                    # 🚨 เปลี่ยนกฎห้ามมีเศษ 30 นาที เป็นการหักคะแนนหนักแทน (แก้ปัญหา Infeasible) 🚨
                     iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
                     prev_v = x[p, t-1, task] if t > 0 else 0
                     next_v = x[p, t+1, task] if t < 15 else 0
                     model.Add(x[p, t, task] - prev_v - next_v <= iso_var)
-                    reward_vars.append(iso_var * -2000000) # หัก 2 ล้านแต้ม ถ้ามีเศษงาน 30 นาที
+                    reward_vars.append(iso_var * -2000000) 
         else:
-            # สำหรับ Part-Time อะลุ้มอล่วยให้มีเศษเวลาได้ (ให้คะแนนบวกเมื่อจับคู่ แต่ไม่หักคะแนนถ้าเป็นเศษ)
             for t in range(15):
                 for task in tasks_to_pair:
                     match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
@@ -440,8 +429,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16): 
             reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
-    # 9. ดัน Priority จ่ายยาแบบทะลุเพดาน
+    # 🌟 9. ดัน Priority จ่ายยาและจัดอันดับงานช่วงพัก 🌟
     for t in range(16):
+        # ถ้านอกเวลาพัก ให้ใช้คะแนนน้ำหนักปกติ
         weights = {
             'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
             'Ver_4': 50000, 'PS_3': 48000, 
@@ -451,6 +441,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             'Ver_8': 34000, 'PS_7': 32000, 'Ver_9': 30000, 'PS_8': 28000, 
             'Ver_10': 26000, 'PS_9': 24000, 'PS_10': 22000
         }
+        
+        # 🌟 ถัาเป็นวัน จ. พ. ศ. และเป็นช่วงเวลาพัก ให้ลดความสำคัญของ จ่าย 4 และ 11 ลง 🌟
+        if IS_MWF and (t in break_slots):
+            weights['จ่ายยา_4'] = 1000  # ลดคะแนนลงสุดๆ เพื่อให้ AI เติมตำแหน่งอื่นก่อนเสมอ
+            weights['จ่ายยา_11'] = 1000
+
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): 
                 reward_vars.append(x[p, t, task] * (weight + i))
@@ -645,7 +641,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 120 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 121 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
