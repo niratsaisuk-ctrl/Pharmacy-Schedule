@@ -397,23 +397,33 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
-        iso_vars = []
-        for t in range(16):
-            for task in tasks_to_pair:
-                if t < 15:
+        # 🌟 แยกกฎกวาดล้าง 30 นาที ให้ทำงานเฉพาะกับ Full-Time เท่านั้น 🌟
+        if p in ft_pharmacists:
+            iso_vars = []
+            for t in range(16):
+                for task in tasks_to_pair:
+                    if t < 15:
+                        match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
+                        model.AddImplication(match_var, x[p, t, task])
+                        model.AddImplication(match_var, x[p, t+1, task])
+                        reward_vars.append(match_var * 500000) 
+                    
+                    iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
+                    prev_v = x[p, t-1, task] if t > 0 else 0
+                    next_v = x[p, t+1, task] if t < 15 else 0
+                    model.Add(x[p, t, task] - prev_v - next_v <= iso_var)
+                    iso_vars.append(iso_var)
+                    reward_vars.append(iso_var * -2000000) 
+            
+            model.Add(sum(iso_vars) <= 2)
+        else:
+            # ของ Part-time ให้แค่โบนัสเวลาจัดลง 1 ชม. แต่ไม่ลงโทษถ้ายอมหั่นเป็น 30 นาที
+            for t in range(15):
+                for task in tasks_to_pair:
                     match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
                     model.AddImplication(match_var, x[p, t, task])
                     model.AddImplication(match_var, x[p, t+1, task])
-                    reward_vars.append(match_var * 500000) 
-                
-                iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
-                prev_v = x[p, t-1, task] if t > 0 else 0
-                next_v = x[p, t+1, task] if t < 15 else 0
-                model.Add(x[p, t, task] - prev_v - next_v <= iso_var)
-                iso_vars.append(iso_var)
-                reward_vars.append(iso_var * -2000000) 
-        
-        model.Add(sum(iso_vars) <= 2)
+                    reward_vars.append(match_var * 150000)
 
     for pt in PART_TIME:
         p = pt['name']
@@ -632,7 +642,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 116 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 117 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -726,7 +736,7 @@ with st.sidebar:
             'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7',
             'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11',
             'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3',
-            'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver_7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10',
+            'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10',
             'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5',
             'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10',
             'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'
