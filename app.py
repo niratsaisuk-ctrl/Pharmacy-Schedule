@@ -163,25 +163,16 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): model.Add(x[p, t, 'พัก'] == 0)
 
-        # โควตาจ่ายยาแบบยืดหยุ่นของแต่ละกลุ่ม
         if is_group_a: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 4) 
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 4) 
             model.Add(sum(x[p, t, task] for t in range(0, 8) for task in my_dispense_allowed) == 4)
             model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
         elif is_group_b: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
             model.Add(sum(x[p, t, task] for t in range(0, 8) for task in my_dispense_allowed) == 2)
             model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
-        elif is_group_c: 
+        elif is_group_c or is_group_d: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 4)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 2)
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 2)
-        elif is_group_d: 
-            model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 4)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 2)
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 2)
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
 
@@ -257,20 +248,24 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                     for task2 in cat:
                         if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
-    # 🌟 9.2 กฎ 1 ชั่วโมงเฉพาะงานหลัก (HARD RULE) นำมาบังคับใช้กับ "ทุกคน" (รวม PT ด้วย) 🌟
-    # ป้องกันไม่ให้ PT ถูกแช่ให้จ่ายยาช่องเดียวรวด 2 ชั่วโมง
+    # 9.2 กฎ 1 ชั่วโมงเฉพาะงานหลัก (บังคับใช้กับ "ทุกคน" เพื่อไม่ให้ PT ยืนจ่ายยาเกิน 1 ชม.)
     for p in all_pharmacists:
         for t in range(14): 
             model.Add(sum(x[p, t+k, task] for task in dispensing_tasks for k in range(3)) <= 2)
 
-    # สำหรับงาน Ver และ Match ให้บังคับเฉพาะ FT เพราะ PT ไม่ได้ทำอยู่แล้ว
+    # กฎ 1 ชั่วโมงสำหรับงาน Ver และ Match (บังคับเฉพาะ FT)
     work_categories_ft = [['Ver_1', 'Ver_2', 'Ver_3'], ['PS_1'], ['Match_C', 'Match_C2']]
     for p in ft_pharmacists:                    
         for cat in work_categories_ft:
             for t in range(14): 
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
-    # 9.3 ความยุติธรรมและขีดจำกัดการจ่ายยา
+    # 🌟 9.3 กฎใหม่ V116.2: PT ห้ามทำ Matching ติดกันเกิน 1 ชั่วโมง (2 สล็อต) 🌟
+    for p in pt_pharmacists:
+        for t in range(14):
+            model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
+
+    # 9.4 ความยุติธรรมและขีดจำกัดการจ่ายยาของ FT
     is_disp_7_vars = []
     for p in ft_pharmacists:
         tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
@@ -353,7 +348,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
             reward_vars.append(match_pair_pt * 150000) 
 
-    # หักคะแนนรุนแรงถ้ามี "เศษงาน 30 นาทีโดดๆ" 
+    # หักคะแนนรุนแรงถ้ามี "เศษงาน 30 นาทีโดดๆ" (เพื่อบีบให้รวมเป็น 1 ชั่วโมงถ้าเป็นไปได้)
     for p in ft_pharmacists:
         ft_iso_disp_vars = []
         for t in range(16):
@@ -364,6 +359,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(x[p, t, d] - prev_v - next_v <= iso_disp)
                 ft_iso_disp_vars.append(iso_disp)
                 reward_vars.append(iso_disp * -200000) 
+        # อนุญาตให้มีเศษ 30 นาทีได้แค่ 2 ครั้งต่อคน
         model.Add(sum(ft_iso_disp_vars) <= 2)
 
     for p in all_pharmacists:
@@ -519,7 +515,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 116.1 (Fix PT Dispatch Rule) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 116.2 (06/05/26) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -678,36 +674,5 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
 
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
-    
-    full_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-        <style>
-            body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }}
-            .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }}
-            .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }}
-            #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}
-        </style>
-    </head>
-    <body>
-        <button class="btn" onclick="setTimeout(takeShot, 1000)">📸 บันทึกเป็นรูปภาพ (PNG)</button>
-        <div id="capture-area-wrapper">{html_table}</div>
-        <script>
-            function takeShot() {{
-                const target = document.getElementById('capture-area');
-                html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{
-                    let link = document.createElement('a');
-                    link.download = '{file_name_png}';
-                    link.href = canvas.toDataURL('image/png');
-                    link.click();
-                }});
-            }}
-        </script>
-    </body>
-    </html>
-    """
+    full_html = f"<!DOCTYPE html><html><head><meta charset='utf-8'><link href='https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap' rel='stylesheet'><script src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'></script><style>body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }} .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }} .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }} #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}</style></head><body><button class='btn' onclick='setTimeout(takeShot, 1000)'>📸 บันทึกเป็นรูปภาพ (PNG)</button><div id='capture-area-wrapper'>{html_table}</div><script>function takeShot() {{ const target = document.getElementById('capture-area'); html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{ let link = document.createElement('a'); link.download = '{file_name_png}'; link.href = canvas.toDataURL('image/png'); link.click(); }}); }}</script></body></html>"
     components.html(full_html, height=50, scrolling=False)
