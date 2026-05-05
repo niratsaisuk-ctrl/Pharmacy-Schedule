@@ -64,7 +64,6 @@ VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "1
 def time_to_slot(t_str):
     return VALID_TIMES.index(t_str)
 
-# 🌟 เพิ่ม IS_MWF เข้ามาในฟังก์ชัน 🌟
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF):
     model = cp_model.CpModel()
     
@@ -277,7 +276,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         else: 
             req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             
-        # 🌟 ล็อกปิดหมวดงานที่ไม่จำเป็นช่วงพักของวัน จันทร์ พุธ ศุกร์ 🌟
         if IS_MWF and (t in break_slots):
             if 'Ver_1' in req_core:
                 req_core.remove('Ver_1')
@@ -380,7 +378,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 5) 
 
-    # 🌟 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (อัปเกรดบทลงโทษรุนแรง) 🌟
+    # 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint)
     for p in all_pharmacists:
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
@@ -389,26 +387,25 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             
             too_long = model.NewBoolVar(f'too_long_disp_{p}_{t}')
             model.Add(is_disp_t + is_disp_t1 + is_disp_t2 <= 2 + too_long)
-            reward_vars.append(too_long * -500000) 
+            reward_vars.append(too_long * -100000) 
             
             short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
-            reward_vars.append(short_break * -500000) 
+            reward_vars.append(short_break * -100000)
 
-    # 🌟 8. ระบบกวาดล้างเศษงาน 30 นาที (Ultra-Strict 1-Hour Block) 🌟
+    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม.
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
+    
     for p in all_pharmacists:
         iso_vars = []
         for t in range(16):
             for task in tasks_to_pair:
-                # ให้คะแนนความต่อเนื่องสูงๆ
                 if t < 15:
                     match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
                     model.AddImplication(match_var, x[p, t, task])
                     model.AddImplication(match_var, x[p, t+1, task])
                     reward_vars.append(match_var * 500000) 
                 
-                # เช็กเศษงาน 30 นาที (โดดๆ ไม่มีหัวท้าย) โดนหัก 2 ล้านแต้ม!
                 iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
                 prev_v = x[p, t-1, task] if t > 0 else 0
                 next_v = x[p, t+1, task] if t < 15 else 0
@@ -416,7 +413,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 iso_vars.append(iso_var)
                 reward_vars.append(iso_var * -2000000) 
         
-        # บังคับ 1 คน มีเศษงาน 30 นาทีได้ไม่เกิน 2 ครั้งต่อวัน (เพื่อความยืดหยุ่นตอนเข้า-ออกเวร)
         model.Add(sum(iso_vars) <= 2)
 
     for pt in PART_TIME:
@@ -431,7 +427,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16): 
             reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
-    # 9. น้ำหนัก Priority 
+    # 9. ดัน Priority จ่ายยาแบบทะลุเพดาน
     for t in range(16):
         weights = {
             'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
@@ -636,7 +632,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 115 01/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 116 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -663,7 +659,6 @@ with st.sidebar:
     today_bkk = datetime.now(tz_bkk).date()
     selected_date = st.date_input("date", today_bkk, label_visibility="collapsed")
     
-    # 🌟 คำนวณวัน จ. พ. ศ. เพื่อส่งให้ AI 🌟
     IS_MWF = selected_date.weekday() in [0, 2, 4]
     
     if selected_date.weekday() in [2, 4]: 
@@ -788,7 +783,6 @@ st.markdown("<hr>", unsafe_allow_html=True)
 if st.button("🚀 เริ่มจัดตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
     with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
         try:
-            # 🌟 ส่ง IS_MWF เข้าไปคำนวณใน AI ด้วย 🌟
             df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input, IS_MWF)
             
             if status == "Success":
