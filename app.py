@@ -25,7 +25,7 @@ def get_thai_date(date_obj):
     return f"{day_name}ที่ {day} {month} {year}"
 
 # ==========================================
-# ⚙️ ฟังก์ชันเลือกสีหัวตารางเวลา (Time Block Colors)
+# ⚙️ ฟังก์ชันเลือกสีหัวตารางเวลา
 # ==========================================
 def get_header_color(t_idx, day_of_week):
     if day_of_week == 'Normal':
@@ -50,13 +50,10 @@ header_color_map = {
     'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
 }
 
-thin_border = Border(left=Side(style='thin'), 
-                     right=Side(style='thin'), 
-                     top=Side(style='thin'), 
-                     bottom=Side(style='thin'))
+thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# ⚙️ ส่วนที่ 1: ฟังก์ชันคำนวณตาราง (AI Logic V115.2)
+# ⚙️ ส่วนที่ 1: ฟังก์ชันคำนวณตาราง (AI Logic)
 # ==========================================
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
                "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
@@ -157,9 +154,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
-        work_duration = e_idx - s_idx
-        
-        is_full_day_pt = work_duration >= 12
         
         my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
         if len(PART_TIME) >= 2: 
@@ -196,32 +190,24 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 4) 
             model.Add(sum(x[p, t, task] for t in range(0, 8) for task in my_dispense_allowed) == 4)
             model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
-
         elif is_group_b: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
             model.Add(sum(x[p, t, task] for t in range(0, 8) for task in my_dispense_allowed) == 2)
             model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
-
         elif is_group_c: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 4)
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 2)
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 2)
-
         elif is_group_d: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 4)
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 2)
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 2)
-
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) >= 2)
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) >= 2)
 
-        for d in my_dispense_allowed:
-            for t in range(16):
-                prev_v = x[p, t-1, d] if t > 0 else 0
-                next_v = x[p, t+1, d] if t < 15 else 0
-                model.Add(prev_v + next_v >= 1).OnlyEnforceIf(x[p, t, d])
+        # 🚨 เอา Hard Constraint ป้องกันเศษเวลา 30 นาทีของ PT ออกแล้ว ป้องกันตาราง Infeasible 🚨
 
     # 4. จัดการเวลาพัก
     b_group_vars_ft = {0: [], 1: [], 2: []}
@@ -262,7 +248,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
     
-    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ (พร้อมเงื่อนไขพิเศษช่วงพักของวัน จ. พ. ศ.)
+    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ 
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -277,6 +263,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             
         if IS_MWF and (t in break_slots):
+            # อนุญาตให้มี Ver 1 ต่อไป แต่ลดความสำคัญของการจ่ายยาช่องอื่น
             if 'Ver_1' in req_core:
                 req_core.remove('Ver_1')
             model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
@@ -305,7 +292,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
         model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists))
 
-    # 6. กฎป้องกันการสลับช่องจ่ายยา
+    # 6. กฎป้องกันการสลับช่องจ่ายยา (HARD RULE)
     categories_to_prevent_internal_switch = [dispensing_tasks]
     for p in all_pharmacists:
         for t in range(15):
@@ -314,8 +301,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                     for task2 in cat:
                         if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
-    work_categories = [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match_C', 'Match_C2']]
-    for p in all_pharmacists:                    
+    work_categories = [dispensing_tasks, ['Ver_1', 'Ver_2', 'Ver_3'], ['PS_1'], ['Match_C', 'Match_C2']]
+    for p in ft_pharmacists:                    
         for cat in work_categories:
             for t in range(14):
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
@@ -325,12 +312,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for p in ft_pharmacists:
         tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
         
-        is_disp_7 = model.NewBoolVar(f'is_disp_7_{p}')
-        model.Add(tot_disp <= 6 + is_disp_7) 
-        model.Add(tot_disp <= 7) 
-        reward_vars.append(is_disp_7 * -500000) 
+        over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
+        model.Add(tot_disp <= 6 + over_3hr_var)
+        model.Add(tot_disp <= 7) # Max 3.5 ชม.
+        reward_vars.append(over_3hr_var * -500000) 
         
-        is_disp_7_vars.append(is_disp_7)
+        is_disp_7_vars.append(over_3hr_var)
         
         if p in active_ft and p not in SICK_PEOPLE:
             has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
@@ -366,6 +353,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for v in ['Ver_1', 'Ver_3']:
             model.Add(sum(x[p, t, v] for t in range(16)) <= 2)
 
+        # 🌟 กฎเหล็ก: ลงช่อง 7 แล้วต้องไม่มี 8 ในวันเดียวกัน 🌟
         done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
         model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
         model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
@@ -374,7 +362,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         
-        # Hard Constraint: ห้ามจ่ายยาช่อง 7 และ 8 ในวันเดียวกันเด็ดขาด
+        # Hard Constraint
         model.Add(done_disp_7 + done_disp_8 <= 1)
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
@@ -396,7 +384,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม.
+    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (ลดเศษ 30 นาที)
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
@@ -419,6 +407,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
             reward_vars.append(match_pair_pt * 150000) 
 
+    # กวาดล้างเศษงาน 30 นาทีเฉพาะการจ่ายยาสำหรับ FT (อนุญาตได้ 2 ครั้งต่อวัน)
     for p in ft_pharmacists:
         ft_iso_disp_vars = []
         for t in range(16):
@@ -578,8 +567,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
         
-        # 🌟 ปรับเพิ่มความสูงของ Cell ให้สวยงามและอ่านง่ายขึ้น 🌟
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 16px; white-space: nowrap; height: 45px; box-sizing: border-box;"
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 2px 5px; text-align: center; font-size: 14px; white-space: nowrap; height: 45px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
@@ -614,7 +602,6 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         bg = "#FFFFFF"
         if i >= 1:
             bg = get_head_color_hex(i - 1, DAY_OF_WEEK)
-        # 🌟 ปรับเพิ่มความสูงของหัวตาราง (Header) 🌟
         html += f'<th style="background-color: {bg}; border: 1px solid black; padding: 5px; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;">{col}</th>'
     html += "</tr>"
     
@@ -652,7 +639,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 115.3 06/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 115.4 (06/05/2026) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -836,8 +823,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         styled_df.to_excel(writer, index=False, sheet_name='Schedule', startrow=2)
         
         worksheet = writer.sheets['Schedule']
-        
-        # 🌟 ตั้งค่า Excel ให้อยู่กึ่งกลางหน้ากระดาษและพร้อม Print 🌟
         worksheet.sheet_properties.pageSetUpPr.fitToPage = True
         worksheet.page_setup.orientation = worksheet.ORIENTATION_LANDSCAPE
         worksheet.page_setup.paperSize = worksheet.PAPERSIZE_A4
@@ -862,7 +847,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         worksheet['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
         worksheet['A2'].alignment = Alignment(horizontal="center", vertical="center")
         
-        worksheet.row_dimensions[3].height = 50
+        worksheet.row_dimensions[3].height = 40
         center_aligned_text = Alignment(horizontal="center", vertical="center")
         
         num_columns = len(df_to_show.columns)
@@ -872,7 +857,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
             
             for row_idx in range(3, len(df_to_show) + 4): 
                 if row_idx >= 4:
-                    worksheet.row_dimensions[row_idx].height = 40
+                    worksheet.row_dimensions[row_idx].height = 30
                     
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 cell.alignment = center_aligned_text
@@ -880,7 +865,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 cell_val_str = str(cell.value)
                 is_bold = True if (cell.row == 3 or cell.column == 1) else False
                 
-                # 🌟 เปลี่ยน Font เป็น TH Sarabun New ทั้งหมด 🌟
                 if "Match" in cell_val_str and cell_val_str in ["Match + C", "Match + C2"]:
                     cell.font = Font(name='TH Sarabun New', size=18, bold=True, color="FF0000")
                 elif '/' in cell_val_str and '-' in cell_val_str and cell_val_str[0].isdigit():
@@ -909,7 +893,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
     
-    # 🌟 ฝัง Google Fonts ให้รูปภาพ PNG 🌟
     full_html = f"""
     <!DOCTYPE html>
     <html>
