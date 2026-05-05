@@ -159,6 +159,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
         work_duration = e_idx - s_idx
         
+        is_full_day_pt = work_duration >= 12
+        
         my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
         if len(PART_TIME) >= 2: 
             my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
@@ -260,7 +262,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
     
-    # 5. กฎจำกัดจำนวนคนต่อหน้าที่
+    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ (พร้อมเงื่อนไขพิเศษช่วงพักของวัน จ. พ. ศ.)
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -274,6 +276,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         else: 
             req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             
+        if IS_MWF and (t in break_slots):
+            if 'Ver_1' in req_core:
+                req_core.remove('Ver_1')
+            model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'Ver_1'] for p in all_pharmacists) == 0)
+
         for task in req_core:
             model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
@@ -311,13 +320,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t in range(14):
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
-    # 🌟 7. กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา 🌟
+    # 🌟 7. กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา (เวอร์ชัน 115.3 - ฐานจาก 115.2) 🌟
     is_disp_7_vars = []
     for p in ft_pharmacists:
         tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
         
-        # ถ้ายอดรวมจ่ายยาเกิน 6 ช่อง (3 ชั่วโมง) จะโดนหักคะแนนหนักมาก
-        # แต่บังคับลิมิตสูงสุดไม่ให้เกิน 7 ช่อง (3.5 ชั่วโมง) เด็ดขาด
+        # ถ้ายอดรวมจ่ายยาเกิน 6 ช่อง (3 ชั่วโมง) จะโดนหักคะแนนหนักมาก (พยายามไม่ให้เกิน)
+        # แต่ถ้าจำเป็นจริงๆ ยอมให้เกินได้ถึง 7 ช่อง (3.5 ชั่วโมง) - Hard Limit 7
         over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
         model.Add(tot_disp <= 6 + over_3hr_var)
         model.Add(tot_disp <= 7) 
@@ -368,7 +377,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         
-        # Hard Constraint: ห้ามเป็นจริงทั้งคู่เด็ดขาด
+        # Hard Constraint: ห้ามลงทั้งคู่เด็ดขาด
         model.Add(done_disp_7 + done_disp_8 <= 1)
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
@@ -390,7 +399,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 🌟 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (ลดเศษ 30 นาที) 🌟
+    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (ลดเศษ 30 นาที)
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
@@ -400,6 +409,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.AddImplication(match_var, x[p, t, task])
                 model.AddImplication(match_var, x[p, t+1, task])
                 
+                # โบนัสสูงมากสำหรับ จ่ายยา เพื่อให้พยายามจัดเป็นบล็อก 1 ชม. เสมอ
                 if task in dispensing_tasks:
                     reward_vars.append(match_var * 500000) 
                 else:
@@ -423,6 +433,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 next_v = x[p, t+1, d] if t < 15 else 0
                 model.Add(x[p, t, d] - prev_v - next_v <= iso_disp)
                 ft_iso_disp_vars.append(iso_disp)
+                # โทษหนักสำหรับเศษจ่ายยา 30 นาที เพื่อบีบให้ AI จัดเป็น 1 ชม.
                 reward_vars.append(iso_disp * -200000) 
         
         # Hard constraint อนุญาตให้มีเศษจ่ายยา 30 นาทีได้แค่ 2 ครั้งต่อคนต่อวัน
@@ -574,6 +585,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
         
+        # 🌟 บังคับความสูงแถวข้อมูลเป็น 30px (บวก padding บน-ล่าง) และใช้ฟอนต์ Sarabun 🌟
         return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 2px 5px; text-align: center; font-size: 14px; white-space: nowrap; height: 30px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
@@ -595,7 +607,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
     num_cols = len(cols)
     
     html = f"""
-    <div id="capture-area" style="background-color: white; padding: 20px; display: inline-block; font-family: 'Tahoma', sans-serif;">
+    <div id="capture-area" style="background-color: white; padding: 20px; display: inline-block; font-family: 'Sarabun', 'TH Sarabun New', sans-serif;">
         <table style="border-collapse: collapse; width: 100%;">
             <tr>
                 <td colspan="{num_cols}" style="text-align: center; font-size: 24px; font-weight: bold; border: none; padding-bottom: 5px;">ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td>
@@ -646,7 +658,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 115.2 (06/05/2026) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 115.3 06/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -836,19 +848,24 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         worksheet.page_setup.fitToWidth = 1 
         worksheet.page_setup.fitToHeight = 1 
         
+        # 🌟 ตั้งค่าให้ตารางอยู่กึ่งกลางหน้ากระดาษเมื่อพิมพ์ (แนวนอนและแนวตั้ง) 🌟
+        worksheet.print_options.horizontalCentered = True
+        worksheet.print_options.verticalCentered = True
+        
         cm_to_inch = 0.4 / 2.54
         worksheet.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
         
         thai_date_str = get_thai_date(selected_date)
         
+        # 🌟 เปลี่ยนฟอนต์ใน Excel เป็น TH Sarabun New 🌟
         worksheet['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
         worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_to_show.columns))
-        worksheet['A1'].font = Font(name='TH SarabunPSK', size=20, bold=True)
+        worksheet['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
         worksheet['A1'].alignment = Alignment(horizontal="center", vertical="center")
         
         worksheet['A2'] = f"ประจำ{thai_date_str}"
         worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(df_to_show.columns))
-        worksheet['A2'].font = Font(name='TH SarabunPSK', size=18, bold=True)
+        worksheet['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
         worksheet['A2'].alignment = Alignment(horizontal="center", vertical="center")
         
         worksheet.row_dimensions[3].height = 40
@@ -870,11 +887,11 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 is_bold = True if (cell.row == 3 or cell.column == 1) else False
                 
                 if "Match" in cell_val_str and cell_val_str in ["Match + C", "Match + C2"]:
-                    cell.font = Font(name='TH SarabunPSK', size=18, bold=True, color="FF0000")
+                    cell.font = Font(name='TH Sarabun New', size=18, bold=True, color="FF0000")
                 elif '/' in cell_val_str and '-' in cell_val_str and cell_val_str[0].isdigit():
-                    cell.font = Font(name='TH SarabunPSK', size=18, bold=True)
+                    cell.font = Font(name='TH Sarabun New', size=18, bold=True)
                 else:
-                    cell.font = Font(name='TH SarabunPSK', size=18, bold=is_bold)
+                    cell.font = Font(name='TH Sarabun New', size=18, bold=is_bold)
                     
                 cell.border = thin_border
                 
@@ -897,15 +914,17 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
     
+    # 🌟 ฝังลิงก์ Google Fonts โหลดฟอนต์ตระกูล Sarabun เพื่อใช้ในรูปภาพ PNG 🌟
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
         <style>
             body {{ 
-                font-family: 'Source Sans Pro', sans-serif; 
+                font-family: 'Sarabun', 'TH Sarabun New', sans-serif; 
                 margin: 0; 
                 padding: 0; 
                 background: transparent; 
@@ -919,7 +938,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 border-radius: 0.5rem; 
                 cursor: pointer; 
                 font-size: 16px;
-                font-family: "Source Sans Pro", sans-serif; 
+                font-family: "Sarabun", "TH Sarabun New", sans-serif; 
                 font-weight: 400;
                 line-height: 1.6;
                 transition: all 0.2s ease;
