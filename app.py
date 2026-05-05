@@ -262,7 +262,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
     
-    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ (พร้อมเงื่อนไขพิเศษช่วงพักของวัน จ. พ. ศ.)
+    # 5. กฎจำกัดจำนวนคนต่อหน้าที่ 
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -314,13 +314,16 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                     for task2 in cat:
                         if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
+    # 🌟 7. กฎ 1 ชั่วโมงเฉพาะงานหลัก (Hard Constraint ตามเอกสาร) 🌟
+    # "ต้องไม่จัดให้จ่ายยา, Ver CPOE, Ver PS, Match+C ติดกันเป็นเวลามากกว่า 1 ชั่วโมง"
+    # แปลว่าทำติดกันได้สูงสุดแค่ 2 ช่อง (2 x 30 นาที = 1 ชม.) ห้ามทำ 3 ช่องติด
     work_categories = [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match_C', 'Match_C2']]
     for p in all_pharmacists:                    
         for cat in work_categories:
             for t in range(14):
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
-    # 7. กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา 
+    # 7.1 กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา 
     is_disp_7_vars = []
     for p in ft_pharmacists:
         tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
@@ -378,50 +381,28 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 5) 
 
-    # 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint โทษหนัก)
+    # 🌟 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint โทษหนัก) 🌟
     for p in all_pharmacists:
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
             is_disp_t1 = sum(x[p, t+1, d] for d in dispensing_tasks)
             is_disp_t2 = sum(x[p, t+2, d] for d in dispensing_tasks)
             
-            too_long = model.NewBoolVar(f'too_long_disp_{p}_{t}')
-            model.Add(is_disp_t + is_disp_t1 + is_disp_t2 <= 2 + too_long)
-            reward_vars.append(too_long * -100000) 
-            
+            # โดนหักแต้มถ้าจ่ายยาแล้วพักแค่ 30 นาที แล้วกลับมาจ่ายใหม่
             short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 🌟 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (แก้บั๊ก Infeasible ทิ้ง Hard Limit) 🌟
+    # 8. ระบบ Scoring เพื่อจัดให้งานหลักเป็นบล็อก 1 ชม. (จับคู่ 30+30)
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
-        if p in ft_pharmacists:
-            for t in range(16):
-                for task in tasks_to_pair:
-                    if t < 15:
-                        match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
-                        model.AddImplication(match_var, x[p, t, task])
-                        model.AddImplication(match_var, x[p, t+1, task])
-                        reward_vars.append(match_var * 500000) 
-                    
-                    # หักคะแนนอย่างหนักถ้า AI จัดงานเศษ 30 นาทีโดดๆ ให้ Full-Time
-                    iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
-                    prev_v = x[p, t-1, task] if t > 0 else 0
-                    next_v = x[p, t+1, task] if t < 15 else 0
-                    model.Add(x[p, t, task] - prev_v - next_v <= iso_var)
-                    reward_vars.append(iso_var * -2000000) 
-            
-            # 🚨 นำ Hard Constraint ที่ก่อปัญหาออกแล้ว ให้คะแนน Penalty ด้านบนทำงานแทน 🚨
-        else:
-            # สำหรับ Part-Time อะลุ้มอล่วยให้มีเศษเวลาได้โดยไม่โดนหัก 2 ล้านแต้ม
-            for t in range(15):
-                for task in tasks_to_pair:
-                    match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
-                    model.AddImplication(match_var, x[p, t, task])
-                    model.AddImplication(match_var, x[p, t+1, task])
-                    reward_vars.append(match_var * 150000)
+        for t in range(15):
+            for task in tasks_to_pair:
+                match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
+                model.AddImplication(match_var, x[p, t, task])
+                model.AddImplication(match_var, x[p, t+1, task])
+                reward_vars.append(match_var * 500000) # โบนัสหนักๆ ให้ AI อยากจับคู่งานเหมือนกัน
 
     for pt in PART_TIME:
         p = pt['name']
@@ -430,6 +411,29 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.AddImplication(match_pair_pt, x[p, t, 'Matching'])
             model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
             reward_vars.append(match_pair_pt * 150000) 
+
+    # ลงโทษความกระจัดกระจายของการจ่ายยาของ Full-time (Soft Constraint)
+    for p in ft_pharmacists:
+        ft_iso_disp_vars = []
+        for t in range(16):
+            for d in dispensing_tasks:
+                iso_disp = model.NewBoolVar(f'iso_disp_{p}_{t}_{d}')
+                prev_v = x[p, t-1, d] if t > 0 else 0
+                next_v = x[p, t+1, d] if t < 15 else 0
+                model.Add(x[p, t, d] - prev_v - next_v <= iso_disp)
+                ft_iso_disp_vars.append(iso_disp)
+                reward_vars.append(iso_disp * -80000) 
+        
+        model.Add(sum(ft_iso_disp_vars) <= 2)
+
+    for p in all_pharmacists:
+        for t in range(16):
+            for target_task in ['Ver_1', 'Ver_2', 'Ver_3', 'Match_C', 'PS_1']:
+                iso_var = model.NewBoolVar(f'iso_{target_task}_{p}_{t}')
+                prev_v = x[p, t-1, target_task] if t > 0 else 0
+                next_v = x[p, t+1, target_task] if t < 15 else 0
+                model.Add(x[p, t, target_task] - prev_v - next_v <= iso_var)
+                reward_vars.append(iso_var * -100000)
 
     for p in ft_pharmacists:
         for t in range(16): 
@@ -640,7 +644,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 118 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 119 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
