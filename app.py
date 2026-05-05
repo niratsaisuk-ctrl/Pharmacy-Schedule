@@ -378,7 +378,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 5) 
 
-    # 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint)
+    # 7.5 กฎเว้นระยะการจ่ายยาอย่างน้อย 1 ชั่วโมง (Soft Constraint โทษหนัก)
     for p in all_pharmacists:
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
@@ -393,13 +393,11 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม.
+    # 🌟 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (แก้บั๊ก Infeasible ทิ้ง Hard Limit) 🌟
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
-        # 🌟 แยกกฎกวาดล้าง 30 นาที ให้ทำงานเฉพาะกับ Full-Time เท่านั้น 🌟
         if p in ft_pharmacists:
-            iso_vars = []
             for t in range(16):
                 for task in tasks_to_pair:
                     if t < 15:
@@ -408,16 +406,16 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                         model.AddImplication(match_var, x[p, t+1, task])
                         reward_vars.append(match_var * 500000) 
                     
+                    # หักคะแนนอย่างหนักถ้า AI จัดงานเศษ 30 นาทีโดดๆ ให้ Full-Time
                     iso_var = model.NewBoolVar(f'strict_iso_{p}_{t}_{task}')
                     prev_v = x[p, t-1, task] if t > 0 else 0
                     next_v = x[p, t+1, task] if t < 15 else 0
                     model.Add(x[p, t, task] - prev_v - next_v <= iso_var)
-                    iso_vars.append(iso_var)
                     reward_vars.append(iso_var * -2000000) 
             
-            model.Add(sum(iso_vars) <= 2)
+            # 🚨 นำ Hard Constraint ที่ก่อปัญหาออกแล้ว ให้คะแนน Penalty ด้านบนทำงานแทน 🚨
         else:
-            # ของ Part-time ให้แค่โบนัสเวลาจัดลง 1 ชม. แต่ไม่ลงโทษถ้ายอมหั่นเป็น 30 นาที
+            # สำหรับ Part-Time อะลุ้มอล่วยให้มีเศษเวลาได้โดยไม่โดนหัก 2 ล้านแต้ม
             for t in range(15):
                 for task in tasks_to_pair:
                     match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
@@ -642,7 +640,7 @@ st.markdown("""
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 117 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 118 05/05/2026 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 st.markdown("ตั้งค่าตารางทางซ้ายมือ แล้วกดสร้างตารางด้านล่างได้เลยครับ")
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
