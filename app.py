@@ -56,7 +56,7 @@ thin_border = Border(left=Side(style='thin'),
                      bottom=Side(style='thin'))
 
 # ==========================================
-# ⚙️ ส่วนที่ 1: ฟังก์ชันคำนวณตาราง (AI Logic)
+# ⚙️ ส่วนที่ 1: ฟังก์ชันคำนวณตาราง (AI Logic V115.2)
 # ==========================================
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
                "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
@@ -320,19 +320,17 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t in range(14):
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
-    # 🌟 7. กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา (เวอร์ชัน 115.3 - ฐานจาก 115.2) 🌟
+    # 7. กฎการผ่อนปรน และความยุติธรรมในการจ่ายยา 
     is_disp_7_vars = []
     for p in ft_pharmacists:
         tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
         
-        # ถ้ายอดรวมจ่ายยาเกิน 6 ช่อง (3 ชั่วโมง) จะโดนหักคะแนนหนักมาก (พยายามไม่ให้เกิน)
-        # แต่ถ้าจำเป็นจริงๆ ยอมให้เกินได้ถึง 7 ช่อง (3.5 ชั่วโมง) - Hard Limit 7
-        over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
-        model.Add(tot_disp <= 6 + over_3hr_var)
+        is_disp_7 = model.NewBoolVar(f'is_disp_7_{p}')
+        model.Add(tot_disp <= 6 + is_disp_7) 
         model.Add(tot_disp <= 7) 
-        reward_vars.append(over_3hr_var * -500000) 
+        reward_vars.append(is_disp_7 * -500000) 
         
-        is_disp_7_vars.append(over_3hr_var)
+        is_disp_7_vars.append(is_disp_7)
         
         if p in active_ft and p not in SICK_PEOPLE:
             has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
@@ -368,7 +366,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for v in ['Ver_1', 'Ver_3']:
             model.Add(sum(x[p, t, v] for t in range(16)) <= 2)
 
-        # 🌟 กฎเหล็ก: ลงช่อง 7 แล้วต้องไม่มี 8 ในวันเดียวกัน (บังคับเฉพาะ FT) 🌟
         done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
         model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
         model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
@@ -377,7 +374,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         
-        # Hard Constraint: ห้ามลงทั้งคู่เด็ดขาด
+        # Hard Constraint: ห้ามจ่ายยาช่อง 7 และ 8 ในวันเดียวกันเด็ดขาด
         model.Add(done_disp_7 + done_disp_8 <= 1)
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
@@ -399,7 +396,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
             reward_vars.append(short_break * -100000)
 
-    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม. (ลดเศษ 30 นาที)
+    # 8. ระบบ Scoring เพื่อจัดบล็อก 1 ชม.
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     
     for p in all_pharmacists:
@@ -409,7 +406,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.AddImplication(match_var, x[p, t, task])
                 model.AddImplication(match_var, x[p, t+1, task])
                 
-                # โบนัสสูงมากสำหรับ จ่ายยา เพื่อให้พยายามจัดเป็นบล็อก 1 ชม. เสมอ
                 if task in dispensing_tasks:
                     reward_vars.append(match_var * 500000) 
                 else:
@@ -423,7 +419,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
             reward_vars.append(match_pair_pt * 150000) 
 
-    # กฎกวาดล้างเศษงาน 30 นาทีเฉพาะการจ่ายยาสำหรับ FT (อนุญาตได้ 2 ครั้งต่อวัน)
     for p in ft_pharmacists:
         ft_iso_disp_vars = []
         for t in range(16):
@@ -433,10 +428,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 next_v = x[p, t+1, d] if t < 15 else 0
                 model.Add(x[p, t, d] - prev_v - next_v <= iso_disp)
                 ft_iso_disp_vars.append(iso_disp)
-                # โทษหนักสำหรับเศษจ่ายยา 30 นาที เพื่อบีบให้ AI จัดเป็น 1 ชม.
                 reward_vars.append(iso_disp * -200000) 
         
-        # Hard constraint อนุญาตให้มีเศษจ่ายยา 30 นาทีได้แค่ 2 ครั้งต่อคนต่อวัน
         model.Add(sum(ft_iso_disp_vars) <= 2)
 
     for p in all_pharmacists:
@@ -585,8 +578,8 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
         
-        # 🌟 บังคับความสูงแถวข้อมูลเป็น 30px (บวก padding บน-ล่าง) และใช้ฟอนต์ Sarabun 🌟
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 2px 5px; text-align: center; font-size: 14px; white-space: nowrap; height: 30px; box-sizing: border-box;"
+        # 🌟 ปรับเพิ่มความสูงของ Cell ให้สวยงามและอ่านง่ายขึ้น 🌟
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 16px; white-space: nowrap; height: 45px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
@@ -610,10 +603,10 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
     <div id="capture-area" style="background-color: white; padding: 20px; display: inline-block; font-family: 'Sarabun', 'TH Sarabun New', sans-serif;">
         <table style="border-collapse: collapse; width: 100%;">
             <tr>
-                <td colspan="{num_cols}" style="text-align: center; font-size: 24px; font-weight: bold; border: none; padding-bottom: 5px;">ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td>
+                <td colspan="{num_cols}" style="text-align: center; font-size: 26px; font-weight: bold; border: none; padding-bottom: 5px;">ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td>
             </tr>
             <tr>
-                <td colspan="{num_cols}" style="text-align: center; font-size: 18px; font-weight: bold; border: none; padding-bottom: 15px;">ประจำ{thai_date_str}</td>
+                <td colspan="{num_cols}" style="text-align: center; font-size: 20px; font-weight: bold; border: none; padding-bottom: 15px;">ประจำ{thai_date_str}</td>
             </tr>
             <tr>
     """
@@ -621,11 +614,12 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         bg = "#FFFFFF"
         if i >= 1:
             bg = get_head_color_hex(i - 1, DAY_OF_WEEK)
-        html += f'<th style="background-color: {bg}; border: 1px solid black; padding: 5px; font-size: 15px; white-space: nowrap; height: 40px; box-sizing: border-box;">{col}</th>'
+        # 🌟 ปรับเพิ่มความสูงของหัวตาราง (Header) 🌟
+        html += f'<th style="background-color: {bg}; border: 1px solid black; padding: 5px; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;">{col}</th>'
     html += "</tr>"
     
     for _, row in df.iterrows():
-        html += "<tr style='height: 30px;'>"
+        html += "<tr style='height: 45px;'>"
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
@@ -842,13 +836,14 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         styled_df.to_excel(writer, index=False, sheet_name='Schedule', startrow=2)
         
         worksheet = writer.sheets['Schedule']
+        
+        # 🌟 ตั้งค่า Excel ให้อยู่กึ่งกลางหน้ากระดาษและพร้อม Print 🌟
         worksheet.sheet_properties.pageSetUpPr.fitToPage = True
         worksheet.page_setup.orientation = worksheet.ORIENTATION_LANDSCAPE
         worksheet.page_setup.paperSize = worksheet.PAPERSIZE_A4
         worksheet.page_setup.fitToWidth = 1 
         worksheet.page_setup.fitToHeight = 1 
         
-        # 🌟 ตั้งค่าให้ตารางอยู่กึ่งกลางหน้ากระดาษเมื่อพิมพ์ (แนวนอนและแนวตั้ง) 🌟
         worksheet.print_options.horizontalCentered = True
         worksheet.print_options.verticalCentered = True
         
@@ -857,7 +852,6 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         
         thai_date_str = get_thai_date(selected_date)
         
-        # 🌟 เปลี่ยนฟอนต์ใน Excel เป็น TH Sarabun New 🌟
         worksheet['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
         worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_to_show.columns))
         worksheet['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
@@ -868,7 +862,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         worksheet['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
         worksheet['A2'].alignment = Alignment(horizontal="center", vertical="center")
         
-        worksheet.row_dimensions[3].height = 40
+        worksheet.row_dimensions[3].height = 50
         center_aligned_text = Alignment(horizontal="center", vertical="center")
         
         num_columns = len(df_to_show.columns)
@@ -878,7 +872,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
             
             for row_idx in range(3, len(df_to_show) + 4): 
                 if row_idx >= 4:
-                    worksheet.row_dimensions[row_idx].height = 30
+                    worksheet.row_dimensions[row_idx].height = 40
                     
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 cell.alignment = center_aligned_text
@@ -886,6 +880,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
                 cell_val_str = str(cell.value)
                 is_bold = True if (cell.row == 3 or cell.column == 1) else False
                 
+                # 🌟 เปลี่ยน Font เป็น TH Sarabun New ทั้งหมด 🌟
                 if "Match" in cell_val_str and cell_val_str in ["Match + C", "Match + C2"]:
                     cell.font = Font(name='TH Sarabun New', size=18, bold=True, color="FF0000")
                 elif '/' in cell_val_str and '-' in cell_val_str and cell_val_str[0].isdigit():
@@ -914,7 +909,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
     
-    # 🌟 ฝังลิงก์ Google Fonts โหลดฟอนต์ตระกูล Sarabun เพื่อใช้ในรูปภาพ PNG 🌟
+    # 🌟 ฝัง Google Fonts ให้รูปภาพ PNG 🌟
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -953,7 +948,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
         </style>
     </head>
     <body>
-        <button class="btn" onclick="takeShot()">📸 บันทึกเป็นรูปภาพ (PNG)</button>
+        <button class="btn" onclick="setTimeout(takeShot, 500)">📸 บันทึกเป็นรูปภาพ (PNG)</button>
         
         <div id="capture-area-wrapper">
             {html_table}
