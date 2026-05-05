@@ -56,8 +56,7 @@ thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
                "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
 
-def time_to_slot(t_str):
-    return VALID_TIMES.index(t_str)
+def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF):
     model = cp_model.CpModel()
@@ -187,8 +186,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 2)
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) >= 2)
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) >= 2)
 
     # --- 7. จัดการเวลาพักของ Full-time (FT) ---
     b_group_vars_ft = {0: [], 1: [], 2: []}
@@ -531,7 +528,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 116.7 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 116.8 (Final Stable) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -554,8 +551,8 @@ with st.sidebar:
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([3, 2])
-            with c1: p_leave = st.selectbox("ชื่อ", dropdown_names, key=f"l_name_{i}", label_visibility="collapsed")
-            with c2: t_leave = st.selectbox("ประเภท", ["ทั้งวัน", "เช้า", "บ่าย"], key=f"l_type_{i}", label_visibility="collapsed")
+            with c1: p_leave = st.selectbox(f"ชื่อคน {i}", dropdown_names, key=f"l_name_{i}", label_visibility="collapsed")
+            with c2: t_leave = st.selectbox(f"ประเภท {i}", ["ทั้งวัน", "เช้า", "บ่าย"], key=f"l_type_{i}", label_visibility="collapsed")
             st.divider()
             if p_leave != "ไม่มี": leaves_input[p_leave] = t_leave
 
@@ -563,11 +560,11 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุ Part-time (สูงสุด 5 คน)", expanded=False):
         for i in range(5):
             st.markdown(f"**PT คนที่ {i+1}**")
-            pt_name = st.text_input("ชื่อ PT", key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
+            pt_name = st.text_input(f"ชื่อ PT {i}", key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
             cc1, cc2, cc3 = st.columns([2, 2, 2])
-            with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"pt_s_{i}")
-            with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, index=16, key=f"pt_e_{i}")
-            with cc3: pt_b = st.checkbox("พัก 12.30", value=True, key=f"pt_b_{i}")
+            with cc1: pt_s = st.selectbox(f"เริ่ม {i}", VALID_TIMES, index=0, key=f"pt_s_{i}")
+            with cc2: pt_e = st.selectbox(f"สิ้นสุด {i}", VALID_TIMES, index=16, key=f"pt_e_{i}")
+            with cc3: pt_b = st.checkbox(f"พัก 12.30 {i}", value=True, key=f"pt_b_{i}")
             st.divider()
             if pt_name.strip() != "": pt_input_list.append({'name': pt_name.strip(), 'start': pt_s, 'end': pt_e, 'has_break': pt_b})
 
@@ -575,11 +572,11 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 20 งาน)", expanded=False):
         for i in range(20):
             st.markdown(f"**งานที่ {i+1}**")
-            p_task = st.selectbox("ชื่อคน", dropdown_names, key=f"t_name_{i}", label_visibility="collapsed")
-            n_task = st.text_input("ชื่องาน", key=f"t_n_{i}", placeholder="ระบุชื่องาน")
+            p_task = st.selectbox(f"ชื่อคน {i}", dropdown_names, key=f"t_name_{i}", label_visibility="collapsed")
+            n_task = st.text_input(f"ชื่องาน {i}", key=f"t_n_{i}", placeholder="ระบุชื่องาน")
             c1, c2 = st.columns(2)
-            with c1: s_task = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"t_s_{i}")
-            with c2: e_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=2, key=f"t_e_{i}")
+            with c1: s_task = st.selectbox(f"เริ่มงาน {i}", VALID_TIMES, index=0, key=f"t_s_{i}")
+            with c2: e_task = st.selectbox(f"สิ้นสุดงาน {i}", VALID_TIMES, index=2, key=f"t_e_{i}")
             st.divider()
             if p_task != "ไม่มี" and n_task.strip() != "": custom_tasks_input[(p_task, s_task, e_task)] = n_task.strip()
 
@@ -589,11 +586,11 @@ with st.sidebar:
         maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
         for i in range(20):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
-            p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
-            n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, key=f"m_task_{i}", label_visibility="collapsed")
+            p_m_task = st.selectbox(f"ชื่อคนล็อก {i}", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
+            n_m_task = st.selectbox(f"ภาระงาน {i}", ["เลือกภาระงาน"] + opts, key=f"m_task_{i}", label_visibility="collapsed")
             c1, c2 = st.columns(2)
-            with c1: s_m_task = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"m_s_{i}")
-            with c2: e_m_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=2, key=f"m_e_{i}")
+            with c1: s_m_task = st.selectbox(f"เริ่มล็อก {i}", VALID_TIMES, index=0, key=f"m_s_{i}")
+            with c2: e_m_task = st.selectbox(f"สิ้นสุดล็อก {i}", VALID_TIMES, index=2, key=f"m_e_{i}")
             st.divider()
             if p_m_task != "ไม่มี" and n_m_task != "เลือกภาระงาน": fixed_main_tasks_input[(p_m_task, s_m_task, e_m_task)] = maps[n_m_task]
 
@@ -607,12 +604,16 @@ with st.sidebar:
 
     st.subheader("🍱 ล็อกเวลาพักเฉพาะบุคคล")
     with st.expander("คลิกเพื่อล็อกเวลาพัก (สูงสุด 5 คน)", expanded=False):
-        break_choices = ["รอบที่ 1", "รอบที่ 2", "รอบที่ 3"]
+        if DAY_OF_WEEK == 'Normal':
+            break_choices = ["รอบที่ 1 (11.00 - 12.00)", "รอบที่ 2 (12.00 - 13.00)", "รอบที่ 3 (13.00 - 14.00)"]
+        else:
+            break_choices = ["รอบที่ 1 (11.30 - 12.30)", "รอบที่ 2 (12.30 - 13.30)", "รอบที่ 3 (13.30 - 14.30)"]
+            
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([2, 3])
-            with c1: p_b = st.selectbox("ชื่อ", dropdown_names, key=f"b_name_{i}", label_visibility="collapsed")
-            with c2: t_b = st.selectbox("รอบพัก", break_choices, key=f"b_time_{i}", label_visibility="collapsed")
+            with c1: p_b = st.selectbox(f"ชื่อคนพัก {i}", dropdown_names, key=f"b_name_{i}", label_visibility="collapsed")
+            with c2: t_b = st.selectbox(f"รอบพัก {i}", break_choices, key=f"b_time_{i}", label_visibility="collapsed")
             st.divider()
             if p_b != "ไม่มี":
                 if "รอบที่ 1" in t_b: fix_breaks_input[p_b] = 0
@@ -691,5 +692,36 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
 
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
-    full_html = f"<!DOCTYPE html><html><head><meta charset='utf-8'><link href='https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap' rel='stylesheet'><script src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'></script><style>body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }} .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }} .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }} #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}</style></head><body><button class='btn' onclick='setTimeout(takeShot, 1000)'>📸 บันทึกเป็นรูปภาพ (PNG)</button><div id='capture-area-wrapper'>{html_table}</div><script>function takeShot() {{ const target = document.getElementById('capture-area'); html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{ let link = document.createElement('a'); link.download = '{file_name_png}'; link.href = canvas.toDataURL('image/png'); link.click(); }}); }}</script></body></html>"
+    
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <style>
+            body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }}
+            .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }}
+            .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }}
+            #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}
+        </style>
+    </head>
+    <body>
+        <button class="btn" onclick="setTimeout(takeShot, 1000)">📸 บันทึกเป็นรูปภาพ (PNG)</button>
+        <div id="capture-area-wrapper">{html_table}</div>
+        <script>
+            function takeShot() {{
+                const target = document.getElementById('capture-area');
+                html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{
+                    let link = document.createElement('a');
+                    link.download = '{file_name_png}';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """
     components.html(full_html, height=50, scrolling=False)
