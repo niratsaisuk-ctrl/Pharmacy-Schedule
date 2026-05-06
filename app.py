@@ -188,6 +188,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) >= 2)
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) >= 2)
 
+        # 🌟 V119: หากวันนั้นมี part time แค่ 1-2 คน ใน 2 ช่องสุดท้ายจะต้องจ่ายยา 🌟
+        if len(PART_TIME) <= 2:
+            for t in range(max(s_idx, e_idx - 2), e_idx):
+                if 0 <= t < 16:
+                    model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
+
     # --- 7. จัดการเวลาพักของ Full-time (FT) ---
     b_group_vars_ft = {0: [], 1: [], 2: []}
     for p in all_pharmacists:
@@ -232,7 +238,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             
         for task in req_core: model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
-        # 🌟 V118.3: บังคับปิดช่อง 4, 5, 10, 11 ในชั่วโมงแรก (08.30 - 09.30) 🌟
+        # บังคับปิดช่อง 4, 5, 10, 11 ในชั่วโมงแรก (08.30 - 09.30)
         if t < 2:
             model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
             model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) == 0)
@@ -341,7 +347,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
 
-    # 🌟 V118.3: บังคับให้มีคนทำ 3.5 ชม. ได้มากที่สุดแค่ 2 คนเท่านั้น (เพื่อความยุติธรรม) 🌟
+    # บังคับให้มีคนทำ 3.5 ชม. ได้มากที่สุดแค่ 2 คนเท่านั้น (เพื่อความยุติธรรม)
     model.Add(sum(is_disp_7_vars) <= 2) 
 
     # --- 10. ระบบ Soft Constraints และ Scoring ---
@@ -545,7 +551,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 118.3 (Limit 3.5hr & Restrict Morning Dispense) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 119 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
