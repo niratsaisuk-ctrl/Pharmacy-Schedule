@@ -232,6 +232,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             
         for task in req_core: model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
+        # 🌟 V118.3: บังคับปิดช่อง 4, 5, 10, 11 ในชั่วโมงแรก (08.30 - 09.30) 🌟
+        if t < 2:
+            model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
+
         if t not in break_slots:
             model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) == 1)
         else:
@@ -334,7 +341,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
 
-    model.Add(sum(is_disp_7_vars) <= 5) 
+    # 🌟 V118.3: บังคับให้มีคนทำ 3.5 ชม. ได้มากที่สุดแค่ 2 คนเท่านั้น (เพื่อความยุติธรรม) 🌟
+    model.Add(sum(is_disp_7_vars) <= 2) 
 
     # --- 10. ระบบ Soft Constraints และ Scoring ---
     
@@ -537,7 +545,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 118.2 (Restore missing date label) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 118.3 (Limit 3.5hr & Restrict Morning Dispense) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -723,5 +731,36 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
 
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
-    full_html = f"<!DOCTYPE html><html><head><meta charset='utf-8'><link href='https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap' rel='stylesheet'><script src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'></script><style>body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }} .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }} .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }} #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}</style></head><body><button class='btn' onclick='setTimeout(takeShot, 1000)'>📸 บันทึกเป็นรูปภาพ (PNG)</button><div id='capture-area-wrapper'>{html_table}</div><script>function takeShot() {{ const target = document.getElementById('capture-area'); html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{ let link = document.createElement('a'); link.download = '{file_name_png}'; link.href = canvas.toDataURL('image/png'); link.click(); }}); }}</script></body></html>"
+    
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <style>
+            body {{ font-family: 'Sarabun', 'TH Sarabun New', sans-serif; margin: 0; padding: 0; background: transparent; }}
+            .btn {{ width: 100%; background-color: #f0f2f6; color: #31333F; padding: 0.5rem 1rem; border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; cursor: pointer; font-size: 16px; font-family: 'Sarabun', 'TH Sarabun New', sans-serif; font-weight: 400; line-height: 1.6; transition: all 0.2s ease; display: block; box-sizing: border-box; }}
+            .btn:hover {{ border-color: #FF4B4B; color: #FF4B4B; }}
+            #capture-area-wrapper {{ position: absolute; left: -9999px; top: -9999px; }}
+        </style>
+    </head>
+    <body>
+        <button class="btn" onclick="setTimeout(takeShot, 1000)">📸 บันทึกเป็นรูปภาพ (PNG)</button>
+        <div id="capture-area-wrapper">{html_table}</div>
+        <script>
+            function takeShot() {{
+                const target = document.getElementById('capture-area');
+                html2canvas(target, {{ scale: 2, useCORS: true, backgroundColor: '#ffffff' }}).then(canvas => {{
+                    let link = document.createElement('a');
+                    link.download = '{file_name_png}';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                }});
+            }}
+        </script>
+    </body>
+    </html>
+    """
     components.html(full_html, height=50, scrolling=False)
