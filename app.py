@@ -244,7 +244,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             d10_sum = sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists)
             reward_vars.append(d10_sum * 150000)
 
-    # 🌟 แกไขส่วนนี้: ลำดับการเปิดช่องจ่ายยาและ Ver/PS 🌟
     for t in range(16):
         for i in range(2, 10): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
         for i in range(4, 10): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
@@ -538,7 +537,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 118.1 (Fix Channel Hierarchy) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 118.2 (Restore missing date label) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -550,8 +549,12 @@ if "run_status" not in st.session_state: st.session_state.run_status = None
 
 with st.sidebar:
     st.markdown("<h2 style='font-size: 24px; font-weight: bold;'>⚙️ ตั้งค่าตารางประจำวัน</h2>", unsafe_allow_html=True)
+    
+    st.subheader("📅 เลือกวันที่ประจำตาราง")
     tz_bkk = timezone(timedelta(hours=7))
-    selected_date = st.date_input("date", datetime.now(tz_bkk).date(), label_visibility="collapsed")
+    today_bkk = datetime.now(tz_bkk).date()
+    selected_date = st.date_input("date", today_bkk, label_visibility="collapsed")
+    
     IS_MWF = selected_date.weekday() in [0, 2, 4]
     DAY_OF_WEEK = 'Wed_Fri' if selected_date.weekday() in [2, 4] else 'Normal'
     
