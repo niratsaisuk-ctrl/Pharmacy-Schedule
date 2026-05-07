@@ -170,16 +170,14 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
 
-        # บังคับจ่ายยาช่องสุดท้ายของ PT หากมีคนน้อย (จาก V119)
         if len(PART_TIME) <= 2:
             for t in range(max(s_idx, e_idx - 2), e_idx):
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
 
-    # 🌟 4. จัดการเวลาพักของ FT (แก้ไขปัญหาลาครึ่งวัน) 🌟
+    # 4. จัดการเวลาพักของ FT
     b_group_vars_ft = {0: [], 1: [], 2: []}
     
-    # คัดเฉพาะคนที่มาทำงานเต็มวันถึงจะได้รับเวลาพัก
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
     
     for p in all_pharmacists:
@@ -201,7 +199,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t in range(16):
                 if t not in break_slots: model.Add(x[p, t, 'พัก'] == 0)
         elif p in ft_pharmacists:
-            # สำหรับคนที่ลาครึ่งวัน หรือ ลาทั้งวัน จะไม่มีเวลาพักในตาราง
             model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 0)
 
     total_active_ft_break = len(full_day_active_ft)
@@ -219,9 +216,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        if t < 2: req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-        elif t == 2: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-        else: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
+        # 🌟 V119.3 FIX: ปลดล็อกช่องจ่ายยา 6-9 ออกจากงานบังคับในช่วง 08.30-09.30 (t < 2) ให้เป็นงานเสริมที่ AI จะเปิดเท่าที่คนพอ 🌟
+        if t < 2: 
+            req_core = ['Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
+        elif t == 2: 
+            req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
+        else: 
+            req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             
         for task in req_core: model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
@@ -382,9 +383,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for p in ft_pharmacists:
         for t in range(16): reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
+    # --- 11. กำหนดความสำคัญ (Weight) ของแต่ละหน้าที่ ---
+    # 🌟 V119.3 FIX: เพิ่ม Weight ให้ช่องจ่ายยาที่ไม่ได้บังคับ เพื่อให้ AI เลือกเปิดช่องจ่ายยาก่อนถอดคนไปทำหน้าที่อื่น 🌟
     for t in range(16):
         weights = {
-            'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
+            'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
+            'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
             'Ver_4': 50000, 'PS_3': 48000, 
             'Match_C2': 47000, 
             'Ver_5': 46000, 'PS_4': 44000, 
@@ -520,7 +524,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 119.2 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 119.3 (Dynamic Dispense for Low Staff) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
