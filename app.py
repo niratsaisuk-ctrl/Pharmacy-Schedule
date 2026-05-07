@@ -177,16 +177,19 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
+        
         my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
         if len(PART_TIME) >= 2: my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
+            
         pt_all_allowed = my_dispense_allowed + ['Matching', 'พัก', 'นอกเวลา']
         
         for t in range(16): 
             if t < s_idx or t >= e_idx: model.Add(x[p, t, 'นอกเวลา'] == 1)
             else: model.Add(x[p, t, 'นอกเวลา'] == 0)
-        for t in range(max(0, s_idx), min(16, e_idx)): model.Add(sum(x[p, t, task] for task in pt_all_allowed) == 1)
+        
+        for t in range(max(0, s_idx), min(16, e_idx)):
+            model.Add(sum(x[p, t, task] for task in pt_all_allowed) == 1)
 
-        # กลุ่ม PT
         is_group_a = (pt['start'] == "09.30" and pt['end'] in ["16.00", "16.30"])
         is_group_b = (pt['start'] in ["10.30", "11.00", "11.30", "12.00", "12.30"] and pt['end'] in ["16.00", "16.30"])
         is_group_c = (pt['start'] in ["13.00", "13.30"] and pt['end'] in ["16.00", "16.30"])
@@ -194,12 +197,14 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         is_group_e = (pt['start'] == "09.00" and pt['end'] == "14.30")
 
         if pt['has_break'] and not (is_group_c or is_group_d or is_group_e):
-            if s_idx <= 8 and e_idx > 8: model.Add(x[p, 8, 'พัก'] == 1) 
-            if e_idx > 9: model.Add(x[p, 9, 'Matching'] == 1) 
+            if s_idx <= 8 and e_idx > 8:
+                model.Add(x[p, 8, 'พัก'] == 1) 
+                if e_idx > 9: model.Add(x[p, 9, 'Matching'] == 1) 
+                    
         for t in range(16):
             if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): model.Add(x[p, t, 'พัก'] == 0)
 
-        # โควตา
+        # โควตาจ่ายยา
         if is_group_a: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 4) 
@@ -371,7 +376,7 @@ def get_color_style(val):
     if 'Match' in val_str: return base + 'background-color: #DAE8FC; color: red; font-weight: bold;' 
     if 'Ver PS' in val_str: return base + 'background-color: #E1D5E7;' 
     if 'Ver' in val_str: return base + 'background-color: #FFE6CC;' 
-    if val_str == 'พัก': return base_style = base + 'background-color: #F8CECC;' 
+    if val_str == 'พัก': return base + 'background-color: #F8CECC;' 
     return base + 'background-color: #E6E6E6;' 
 
 def build_html_table(df, selected_date, DAY_OF_WEEK):
@@ -409,7 +414,7 @@ st.markdown("<style>th {text-align: center !important;} hr {margin: 0.5rem 0;}</
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์")
-st.markdown(f"<p style='color:gray;'>version 120 | เชื่อมต่อ Database: {'✅ พร้อม' if SHEETS_AVAILABLE else '❌ ไม่พร้อม'}</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='color:gray;'>version 120.1 | เชื่อมต่อ Database: {'✅ พร้อม' if SHEETS_AVAILABLE else '❌ ไม่พร้อม'}</p>", unsafe_allow_html=True)
 
 ft_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown = ["ไม่มี"] + ft_list
