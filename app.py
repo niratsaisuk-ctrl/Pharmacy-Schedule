@@ -9,10 +9,10 @@ from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils import get_column_letter
 import streamlit.components.v1 as components
 
-# --- ลอง Import library สำหรับ Google Sheets ---
+# --- ระบบเชื่อมต่อ Google Sheets (อัปเดตใหม่ใช้ google-auth) ---
 try:
     import gspread
-    from oauth2client.service_account import ServiceCredentials
+    from google.oauth2.service_account import Credentials
     SHEETS_AVAILABLE = True
     IMPORT_ERROR_MSG = ""
 except Exception as e:
@@ -57,27 +57,29 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database) แบบตรวจจับ Error
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
-        return None, f"ขาดไลบรารี: {IMPORT_ERROR_MSG} (โปรดตรวจสอบการติดตั้ง gspread ใน requirements.txt)"
+        return None, f"ขาดไลบรารี: {IMPORT_ERROR_MSG}"
     try:
         if "gcp_service_account" not in st.secrets:
-            return None, "ไม่พบรหัสผ่าน 'gcp_service_account' ในหน้า Settings > Secrets ของ Streamlit"
+            return None, "ไม่พบรหัสผ่านใน Streamlit Secrets"
             
-        creds_dict = st.secrets["gcp_service_account"]
+        creds_dict = dict(st.secrets["gcp_service_account"])
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
+        
+        # ใช้วิธีใหม่ในการยืนยันตัวตน
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(credentials)
         
         try:
             sheet = client.open("Pharmacy_Schedule_DB")
             return sheet, "Success"
         except gspread.exceptions.SpreadsheetNotFound:
-            return None, "ไม่พบไฟล์ Google Sheets ที่ชื่อ 'Pharmacy_Schedule_DB' (อย่าลืมสร้างไฟล์และแชร์สิทธิ์ให้ Email บอท)"
+            return None, "ไม่พบไฟล์ Google Sheets ที่ชื่อ 'Pharmacy_Schedule_DB'"
     except Exception as e:
-        return None, f"เกิดข้อผิดพลาดในการเข้าถึง Google: {str(e)}"
+        return None, f"เชื่อมต่อล้มเหลว: {str(e)}"
 
 def save_to_db(df, date_str):
     sheet_file, msg = connect_to_gsheet()
@@ -586,7 +588,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 122 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 123 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
