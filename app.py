@@ -9,8 +9,16 @@ from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils import get_column_letter
 import streamlit.components.v1 as components
 
+# --- ลอง Import library สำหรับ Google Sheets ---
+try:
+    import gspread
+    from oauth2client.service_account import ServiceCredentials
+    SHEETS_AVAILABLE = True
+except ImportError:
+    SHEETS_AVAILABLE = False
+
 # ==========================================
-# ⚙️ ฟังก์ชันแปลงวันที่เป็นภาษาไทย
+# ⚙️ ฟังก์ชันพื้นฐาน (Date & Style)
 # ==========================================
 def get_thai_date(date_obj):
     thai_months = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", 
@@ -22,9 +30,6 @@ def get_thai_date(date_obj):
     year = date_obj.year + 543 
     return f"{day_name}ที่ {day} {month} {year}"
 
-# ==========================================
-# ⚙️ ฟังก์ชันเลือกสีหัวตารางเวลาสำหรับ Excel
-# ==========================================
 def get_header_color(t_idx, day_of_week):
     if day_of_week == 'Normal':
         if t_idx in [0, 1, 3, 4, 11, 12]: return 'orange' 
@@ -50,6 +55,43 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
+# ==========================================
+def connect_to_gsheet():
+    if not SHEETS_AVAILABLE:
+        return None
+    try:
+        creds_dict = st.secrets["gcp_service_account"]
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        return client.open("Pharmacy_Schedule_DB")
+    except Exception:
+        return None
+
+def save_to_db(df, date_str):
+    sheet_file = connect_to_gsheet()
+    if not sheet_file: return False
+    try:
+        try:
+            worksheet = sheet_file.worksheet(date_str)
+            sheet_file.del_worksheet(worksheet)
+        except: pass
+        worksheet = sheet_file.add_worksheet(title=date_str, rows="100", cols="20")
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+        return True
+    except: return False
+
+def load_from_db(date_str):
+    sheet_file = connect_to_gsheet()
+    if not sheet_file: return None
+    try:
+        worksheet = sheet_file.worksheet(date_str)
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data)
+    except: return None
+
+# ==========================================
 # 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
 # ==========================================
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
@@ -57,7 +99,7 @@ VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "1
 
 def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 
-def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF):
+def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
     model = cp_model.CpModel()
     
     ft_pharmacists = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
@@ -175,9 +217,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
 
-    # 4. จัดการเวลาพักของ FT
+    # 4. จัดการเวลาพักของ FT (แก้ปัญหาคนลาครึ่งวัน)
     b_group_vars_ft = {0: [], 1: [], 2: []}
-    
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
     
     for p in all_pharmacists:
@@ -216,7 +257,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        # 🌟 V119.3 FIX: ปลดล็อกช่องจ่ายยา 6-9 ออกจากงานบังคับในช่วง 08.30-09.30 (t < 2) ให้เป็นงานเสริมที่ AI จะเปิดเท่าที่คนพอ 🌟
+        # 🌟 V119.3: ปลดล็อกช่องจ่ายยา 6-9 ช่วงเช้า
         if t < 2: 
             req_core = ['Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
         elif t == 2: 
@@ -384,7 +425,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16): reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
     # --- 11. กำหนดความสำคัญ (Weight) ของแต่ละหน้าที่ ---
-    # 🌟 V119.3 FIX: เพิ่ม Weight ให้ช่องจ่ายยาที่ไม่ได้บังคับ เพื่อให้ AI เลือกเปิดช่องจ่ายยาก่อนถอดคนไปทำหน้าที่อื่น 🌟
     for t in range(16):
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
@@ -402,6 +442,25 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): reward_vars.append(x[p, t, task] * (weight + i))
+
+    # 🌟 V121: Stability Reward (โบนัสสำหรับการจัดเหมือนตารางเดิม) 🌟
+    if REF_SCHEDULE is not None:
+        task_map = {
+            "Match + C": "Match_C", "Match + C2": "Match_C2", "Matching": "Matching", "พัก": "พัก", "ลา": "ลา", "-": "นอกเวลา",
+            "Ver 1 INC": "Ver_1", "Ver 2/ปณ.": "Ver_2", "Ver 3/A": "Ver_3"
+        }
+        for p in all_pharmacists:
+            if p in REF_SCHEDULE.index:
+                for t_idx, t_col in enumerate(time_slots):
+                    old_task_display = REF_SCHEDULE.at[p, t_col]
+                    target_task = None
+                    if "จ่าย " in old_task_display: target_task = old_task_display.replace("จ่าย ", "จ่ายยา_")
+                    elif "Ver PS" in old_task_display: target_task = old_task_display.replace("Ver PS", "PS_")
+                    elif "Ver " in old_task_display: target_task = old_task_display.replace("Ver ", "Ver_")
+                    else: target_task = task_map.get(old_task_display)
+
+                    if target_task in tasks:
+                        reward_vars.append(x[p, t_idx, target_task] * 2000000)
 
     model.Maximize(sum(reward_vars))
     solver = cp_model.CpSolver()
@@ -524,7 +583,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 119.3 (Dynamic Dispense for Low Staff) พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 14px; color: gray;'>version 121 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -533,6 +592,7 @@ leaves_input, pt_input_list, custom_tasks_input, fixed_main_tasks_input, fix_bre
 
 if "schedule_df" not in st.session_state: st.session_state.schedule_df = None
 if "run_status" not in st.session_state: st.session_state.run_status = None
+if "ref_df" not in st.session_state: st.session_state.ref_df = None
 
 with st.sidebar:
     st.markdown("<h2 style='font-size: 24px; font-weight: bold;'>⚙️ ตั้งค่าตารางประจำวัน</h2>", unsafe_allow_html=True)
@@ -541,6 +601,7 @@ with st.sidebar:
     tz_bkk = timezone(timedelta(hours=7))
     today_bkk = datetime.now(tz_bkk).date()
     selected_date = st.date_input("date", today_bkk, label_visibility="collapsed")
+    date_str = selected_date.strftime("%Y-%m-%d")
     
     IS_MWF = selected_date.weekday() in [0, 2, 4]
     DAY_OF_WEEK = 'Wed_Fri' if selected_date.weekday() in [2, 4] else 'Normal'
@@ -550,6 +611,17 @@ with st.sidebar:
     else:
         st.markdown("<p style='color:green; font-size:14px; margin-top:-10px;'>✔️ ปรับตาราง วันปกติ ให้อัตโนมัติ</p>", unsafe_allow_html=True)
         
+    # 🌟 V121: ปุ่มดึงข้อมูลเดิมจาก Database (เนียนตา ไม่ทำลาย UI) 🌟
+    if SHEETS_AVAILABLE:
+        st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>ระบบดึงตารางเดิมมาแก้ไขฉุกเฉิน</p>", unsafe_allow_html=True)
+        if st.button("🔍 ดึงตารางเดิมของวันนี้มาแก้ไข", use_container_width=True):
+            data = load_from_db(date_str)
+            if data is not None and not data.empty:
+                st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
+                st.success("✅ ดึงตารางเดิมสำเร็จ! ระบบพร้อมซ่อมตารางแล้ว")
+            else: 
+                st.error("❌ ไม่พบข้อมูลตารางของวันนี้ในระบบ")
+                
     st.divider()
     
     st.subheader("🏖️ ผู้ที่ลาในวันนี้")
@@ -638,10 +710,10 @@ with st.sidebar:
                 elif "รอบที่ 2" in t_b: fix_breaks_input[p_b] = 1
                 elif "รอบที่ 3" in t_b: fix_breaks_input[p_b] = 2
 
-if st.button("🚀 เริ่มจัดตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
+if st.button("🚀 เริ่มจัดตาราง / ซ่อมตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
     with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
         try:
-            df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input, IS_MWF)
+            df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input, IS_MWF, st.session_state.ref_df)
             if status == "Success":
                 st.session_state.schedule_df = df_result
                 st.session_state.run_status = "Success"
@@ -658,55 +730,70 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     except AttributeError: styled_df = df_to_show.style.applymap(get_color_style, subset=df_to_show.columns[1:])
     st.dataframe(styled_df, use_container_width=True)
     
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        styled_df.to_excel(writer, index=False, sheet_name='Schedule', startrow=2)
-        ws = writer.sheets['Schedule']
-        
-        ws.sheet_properties.pageSetUpPr.fitToPage = True
-        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
-        ws.page_setup.paperSize = ws.PAPERSIZE_A4
-        ws.page_setup.fitToWidth = 1 
-        ws.page_setup.fitToHeight = 1 
-        ws.print_options.horizontalCentered = True
-        ws.print_options.verticalCentered = True
-        cm_to_inch = 0.4 / 2.54
-        ws.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
-        
-        thai_date_str = get_thai_date(selected_date)
-        ws['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_to_show.columns))
-        ws['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
-        ws['A1'].alignment = Alignment(horizontal="center", vertical="center")
-        
-        ws['A2'] = f"ประจำ{thai_date_str}"
-        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(df_to_show.columns))
-        ws['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
-        ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
-        
-        ws.row_dimensions[3].height = 40
-        center_aligned_text = Alignment(horizontal="center", vertical="center")
-        for col_idx in range(1, len(df_to_show.columns) + 1):
-            col_letter = get_column_letter(col_idx)
-            ws.column_dimensions[col_letter].width = 11.5 
-            for row_idx in range(3, len(df_to_show) + 4): 
-                if row_idx >= 4: ws.row_dimensions[row_idx].height = 30
-                cell = ws.cell(row=row_idx, column=col_idx)
-                cell.alignment = center_aligned_text
-                val_str = str(cell.value)
-                is_bold = True if (cell.row == 3 or cell.column == 1) else False
-                
-                if "Match" in val_str and val_str in ["Match + C", "Match + C2"]:
-                    cell.font = Font(name='TH Sarabun New', size=18, bold=True, color="FF0000")
-                elif '/' in val_str and '-' in val_str and val_str[0].isdigit():
-                    cell.font = Font(name='TH Sarabun New', size=18, bold=True)
-                else: cell.font = Font(name='TH Sarabun New', size=18, bold=is_bold)
-                cell.border = thin_border
-                if cell.row == 3 and col_idx >= 2:
-                    c_name = get_header_color(col_idx - 2, DAY_OF_WEEK)
-                    if c_name: cell.fill = header_color_map[c_name]
+    # 🌟 V121: ปุ่มเซฟลงฐานข้อมูลแบบแบ่งครึ่งหน้าจอ (สวยงาม) 🌟
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_db, col_dl = st.columns(2)
     
-    st.download_button("📥 ดาวน์โหลดเป็นไฟล์ Excel", data=buffer.getvalue(), file_name=f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with col_db:
+        if SHEETS_AVAILABLE:
+            if st.button("💾 บันทึกตารางลงฐานข้อมูล (Google Sheets)", use_container_width=True):
+                if save_to_db(df_to_show, date_str): 
+                    st.success("✅ บันทึกข้อมูลขึ้นระบบสำเร็จ!")
+                else: 
+                    st.error("❌ บันทึกล้มเหลว (กรุณาตรวจสอบสิทธิ์การเข้าถึงไฟล์ Sheets)")
+        else:
+            st.info("⚠️ ระบบ Database ยังไม่ได้ตั้งค่า (ขาด gspread / oauth2client)")
+            
+    with col_dl:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            styled_df.to_excel(writer, index=False, sheet_name='Schedule', startrow=2)
+            ws = writer.sheets['Schedule']
+            
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+            ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+            ws.page_setup.paperSize = ws.PAPERSIZE_A4
+            ws.page_setup.fitToWidth = 1 
+            ws.page_setup.fitToHeight = 1 
+            ws.print_options.horizontalCentered = True
+            ws.print_options.verticalCentered = True
+            cm_to_inch = 0.4 / 2.54
+            ws.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
+            
+            thai_date_str = get_thai_date(selected_date)
+            ws['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_to_show.columns))
+            ws['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
+            ws['A1'].alignment = Alignment(horizontal="center", vertical="center")
+            
+            ws['A2'] = f"ประจำ{thai_date_str}"
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(df_to_show.columns))
+            ws['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
+            ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
+            
+            ws.row_dimensions[3].height = 40
+            center_aligned_text = Alignment(horizontal="center", vertical="center")
+            for col_idx in range(1, len(df_to_show.columns) + 1):
+                col_letter = get_column_letter(col_idx)
+                ws.column_dimensions[col_letter].width = 11.5 
+                for row_idx in range(3, len(df_to_show) + 4): 
+                    if row_idx >= 4: ws.row_dimensions[row_idx].height = 30
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.alignment = center_aligned_text
+                    val_str = str(cell.value)
+                    is_bold = True if (cell.row == 3 or cell.column == 1) else False
+                    
+                    if "Match" in val_str and val_str in ["Match + C", "Match + C2"]:
+                        cell.font = Font(name='TH Sarabun New', size=18, bold=True, color="FF0000")
+                    elif '/' in val_str and '-' in val_str and val_str[0].isdigit():
+                        cell.font = Font(name='TH Sarabun New', size=18, bold=True)
+                    else: cell.font = Font(name='TH Sarabun New', size=18, bold=is_bold)
+                    cell.border = thin_border
+                    if cell.row == 3 and col_idx >= 2:
+                        c_name = get_header_color(col_idx - 2, DAY_OF_WEEK)
+                        if c_name: cell.fill = header_color_map[c_name]
+        
+        st.download_button("📥 ดาวน์โหลดเป็นไฟล์ Excel", data=buffer.getvalue(), file_name=f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
     html_table = build_html_table(df_to_show, selected_date, DAY_OF_WEEK)
     file_name_png = f"Pharmacy_Schedule_{selected_date.strftime('%Y-%m-%d')}.png"
