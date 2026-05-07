@@ -14,8 +14,10 @@ try:
     import gspread
     from oauth2client.service_account import ServiceCredentials
     SHEETS_AVAILABLE = True
-except ImportError:
+    IMPORT_ERROR_MSG = ""
+except Exception as e:
     SHEETS_AVAILABLE = False
+    IMPORT_ERROR_MSG = str(e)
 
 # ==========================================
 # ⚙️ ฟังก์ชันพื้นฐาน (Date & Style)
@@ -55,23 +57,31 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database) แบบตรวจจับ Error
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
-        return None
+        return None, f"ขาดไลบรารี: {IMPORT_ERROR_MSG} (โปรดตรวจสอบการติดตั้ง gspread ใน requirements.txt)"
     try:
+        if "gcp_service_account" not in st.secrets:
+            return None, "ไม่พบรหัสผ่าน 'gcp_service_account' ในหน้า Settings > Secrets ของ Streamlit"
+            
         creds_dict = st.secrets["gcp_service_account"]
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        return client.open("Pharmacy_Schedule_DB")
-    except Exception:
-        return None
+        
+        try:
+            sheet = client.open("Pharmacy_Schedule_DB")
+            return sheet, "Success"
+        except gspread.exceptions.SpreadsheetNotFound:
+            return None, "ไม่พบไฟล์ Google Sheets ที่ชื่อ 'Pharmacy_Schedule_DB' (อย่าลืมสร้างไฟล์และแชร์สิทธิ์ให้ Email บอท)"
+    except Exception as e:
+        return None, f"เกิดข้อผิดพลาดในการเข้าถึง Google: {str(e)}"
 
 def save_to_db(df, date_str):
-    sheet_file = connect_to_gsheet()
-    if not sheet_file: return False
+    sheet_file, msg = connect_to_gsheet()
+    if not sheet_file: return False, msg
     try:
         try:
             worksheet = sheet_file.worksheet(date_str)
@@ -79,17 +89,22 @@ def save_to_db(df, date_str):
         except: pass
         worksheet = sheet_file.add_worksheet(title=date_str, rows="100", cols="20")
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-        return True
-    except: return False
+        return True, "บันทึกข้อมูลขึ้น Google Sheets สำเร็จ!"
+    except Exception as e:
+        return False, f"บันทึกข้อมูลล้มเหลว: {str(e)}"
 
 def load_from_db(date_str):
-    sheet_file = connect_to_gsheet()
-    if not sheet_file: return None
+    sheet_file, msg = connect_to_gsheet()
+    if not sheet_file: return None, msg
     try:
         worksheet = sheet_file.worksheet(date_str)
         data = worksheet.get_all_records()
-        return pd.DataFrame(data)
-    except: return None
+        if not data: return pd.DataFrame(), "ข้อมูลตารางของวันนี้ว่างเปล่า"
+        return pd.DataFrame(data), "Success"
+    except gspread.exceptions.WorksheetNotFound:
+        return None, f"ไม่พบข้อมูลตารางของวันที่ {date_str} ในฐานข้อมูล"
+    except Exception as e:
+        return None, f"โหลดข้อมูลล้มเหลว: {str(e)}"
 
 # ==========================================
 # 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
@@ -125,7 +140,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     if DAY_OF_WEEK == 'Wed_Fri': break_slots, b_groups = [6, 7, 8, 9, 10, 11], [(6,8), (8,10), (10,12)] 
     else: break_slots, b_groups = [5, 6, 7, 8, 9, 10], [(5,7), (7,9), (9,11)]
 
-    # 1. จัดการวันลา
     active_ft = []
     leave_slots = set()
     half_day_leaves = set() 
@@ -145,7 +159,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if (p, t) not in leave_slots: model.Add(x[p, t, 'ลา'] == 0)
 
-    # 2. งานเฉพาะราย
     custom_dict_index = {}
     custom_task_slots_count = {p: 0 for p in ft_pharmacists} 
     for (p, start, end), task_name in CUSTOM_TASKS.items():
@@ -159,18 +172,15 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if (p, t) not in custom_dict_index: model.Add(x[p, t, 'งานเฉพาะ'] == 0)
 
-    # ป่วยห้ามจ่ายยา
     for p in SICK_PEOPLE:
         if p in all_pharmacists:
             for t in range(16):
                 for task in dispensing_tasks: model.Add(x[p, t, task] == 0)
 
-    # ล็อกงาน
     for (p, start, end), task_name in FIXED_MAIN_TASKS.items():
         s_idx, e_idx = time_to_slot(start), time_to_slot(end)
         for t in range(s_idx, e_idx): model.Add(x[p, t, task_name] == 1)
 
-    # 3. จัดการ Part-time
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
@@ -217,7 +227,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
 
-    # 4. จัดการเวลาพักของ FT (แก้ปัญหาคนลาครึ่งวัน)
     b_group_vars_ft = {0: [], 1: [], 2: []}
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
     
@@ -250,14 +259,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
     
-    # --- 8. กฎควบคุมจำนวนคนในแต่ละหน้าที่ ---
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        # 🌟 V119.3: ปลดล็อกช่องจ่ายยา 6-9 ช่วงเช้า
         if t < 2: 
             req_core = ['Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
         elif t == 2: 
@@ -297,7 +304,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists))
         model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists))
 
-    # --- 9. กฎเหล็ก ---
     categories_to_prevent_internal_switch = [dispensing_tasks]
     for p in all_pharmacists:
         for t in range(15):
@@ -369,7 +375,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 2) 
 
-    # --- 10. ระบบ Soft Constraints และ Scoring ---
     for p in all_pharmacists:
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
@@ -424,7 +429,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for p in ft_pharmacists:
         for t in range(16): reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
-    # --- 11. กำหนดความสำคัญ (Weight) ของแต่ละหน้าที่ ---
     for t in range(16):
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
@@ -443,7 +447,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): reward_vars.append(x[p, t, task] * (weight + i))
 
-    # 🌟 V121: Stability Reward (โบนัสสำหรับการจัดเหมือนตารางเดิม) 🌟
     if REF_SCHEDULE is not None:
         task_map = {
             "Match + C": "Match_C", "Match + C2": "Match_C2", "Matching": "Matching", "พัก": "พัก", "ลา": "ลา", "-": "นอกเวลา",
@@ -583,7 +586,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown("<p style='font-size: 14px; color: gray;'>version 121 พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 122 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -611,16 +614,14 @@ with st.sidebar:
     else:
         st.markdown("<p style='color:green; font-size:14px; margin-top:-10px;'>✔️ ปรับตาราง วันปกติ ให้อัตโนมัติ</p>", unsafe_allow_html=True)
         
-    # 🌟 V121: ปุ่มดึงข้อมูลเดิมจาก Database (เนียนตา ไม่ทำลาย UI) 🌟
-    if SHEETS_AVAILABLE:
-        st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>ระบบดึงตารางเดิมมาแก้ไขฉุกเฉิน</p>", unsafe_allow_html=True)
-        if st.button("🔍 ดึงตารางเดิมของวันนี้มาแก้ไข", use_container_width=True):
-            data = load_from_db(date_str)
-            if data is not None and not data.empty:
-                st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
-                st.success("✅ ดึงตารางเดิมสำเร็จ! ระบบพร้อมซ่อมตารางแล้ว")
-            else: 
-                st.error("❌ ไม่พบข้อมูลตารางของวันนี้ในระบบ")
+    st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>ระบบดึงตารางเดิมมาแก้ไขฉุกเฉิน</p>", unsafe_allow_html=True)
+    if st.button("🔍 ดึงตารางเดิมของวันนี้มาแก้ไข", use_container_width=True):
+        data, msg = load_from_db(date_str)
+        if data is not None and not data.empty:
+            st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
+            st.success("✅ ดึงตารางเดิมสำเร็จ! ระบบพร้อมซ่อมตารางแล้ว")
+        else: 
+            st.error(f"❌ {msg}")
                 
     st.divider()
     
@@ -730,19 +731,16 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     except AttributeError: styled_df = df_to_show.style.applymap(get_color_style, subset=df_to_show.columns[1:])
     st.dataframe(styled_df, use_container_width=True)
     
-    # 🌟 V121: ปุ่มเซฟลงฐานข้อมูลแบบแบ่งครึ่งหน้าจอ (สวยงาม) 🌟
     st.markdown("<br>", unsafe_allow_html=True)
     col_db, col_dl = st.columns(2)
     
     with col_db:
-        if SHEETS_AVAILABLE:
-            if st.button("💾 บันทึกตารางลงฐานข้อมูล (Google Sheets)", use_container_width=True):
-                if save_to_db(df_to_show, date_str): 
-                    st.success("✅ บันทึกข้อมูลขึ้นระบบสำเร็จ!")
-                else: 
-                    st.error("❌ บันทึกล้มเหลว (กรุณาตรวจสอบสิทธิ์การเข้าถึงไฟล์ Sheets)")
-        else:
-            st.info("⚠️ ระบบ Database ยังไม่ได้ตั้งค่า (ขาด gspread / oauth2client)")
+        if st.button("💾 บันทึกตารางลงฐานข้อมูล (Google Sheets)", use_container_width=True):
+            success, msg = save_to_db(df_to_show, date_str)
+            if success: 
+                st.success("✅ " + msg)
+            else: 
+                st.error("❌ " + msg)
             
     with col_dl:
         buffer = io.BytesIO()
