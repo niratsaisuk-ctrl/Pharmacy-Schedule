@@ -182,12 +182,17 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         s_idx, e_idx = time_to_slot(start), time_to_slot(end)
         for t in range(s_idx, e_idx): model.Add(x[p, t, task_name] == 1)
 
+    # 🌟 V126 FIX: จัดการสิทธิ PT จ่ายยา 🌟
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
         
+        # กฎพื้นฐาน: PT จ่ายได้แค่ 7, 8
         my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
-        if len(PART_TIME) >= 2: my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
+        
+        # ถ้ามี PT เกิน 2 คน ถึงจะอนุญาต 6, 9
+        if len(PART_TIME) > 2: 
+            my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
             
         pt_all_allowed = my_dispense_allowed + ['Matching', 'พัก', 'นอกเวลา']
         
@@ -212,10 +217,11 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): model.Add(x[p, t, 'พัก'] == 0)
 
+        # โควตาตามกลุ่ม PT 
         if is_group_a: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 4) 
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 4) 
+            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) >= 2) 
+            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) >= 2) 
         elif is_group_b: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
         elif is_group_c or is_group_d: 
@@ -223,6 +229,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
 
+        # บังคับจ่ายยาตอนท้าย (สำหรับคนน้อย)
         if len(PART_TIME) <= 2:
             for t in range(max(s_idx, e_idx - 2), e_idx):
                 if 0 <= t < 16:
@@ -517,9 +524,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base_style = "text-align: center; color: black; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): 
-        return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
+    base_style = "text-align: center; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
     elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4; color: black;' 
     elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC; color: black;' 
     elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: #FF0000; font-weight: bold;' 
@@ -588,7 +594,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 125 (ขยายช่องกรอกภารกิจพิเศษเป็น 30 งาน) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 126 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -653,7 +659,7 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเข้างานของ PT คนที่ {i+1} ผิดพลาด")
 
-    # 🌟 V125: ขยายช่องกรอกภารกิจพิเศษเป็น 30 งาน 🌟
+    # ขยายเป็น 30 งาน
     st.subheader("📋 ภารกิจพิเศษ")
     with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 30 งาน)", expanded=False):
         for i in range(30):
@@ -670,7 +676,7 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเริ่ม-สิ้นสุดของงานที่ {i+1} ผิดพลาด")
 
-    # 🌟 V125: ขยายช่องกรอกล็อกภาระงานหลักเป็น 30 รายการ 🌟
+    # ขยายเป็น 30 งาน
     st.subheader("📌 ล็อกภาระงานหลัก")
     with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
         opts = ['จ่าย 4', 'จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'จ่าย 11', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver 4', 'Ver 5', 'Ver 6', 'Ver 7', 'Ver 8', 'Ver 9', 'Ver 10', 'Ver PS1', 'Ver PS2', 'Ver PS3', 'Ver PS4', 'Ver PS5', 'Ver PS6', 'Ver PS7', 'Ver PS8', 'Ver PS9', 'Ver PS10', 'Match + C', 'Match + C2', 'Matching']
