@@ -69,7 +69,6 @@ def connect_to_gsheet():
         creds_dict = dict(st.secrets["gcp_service_account"])
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # ใช้วิธีใหม่ในการยืนยันตัวตน
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
         
@@ -518,8 +517,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base_style = "text-align: center; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
+    base_style = "text-align: center; color: black; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): 
+        return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
     elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4; color: black;' 
     elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC; color: black;' 
     elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: #FF0000; font-weight: bold;' 
@@ -588,7 +588,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 123 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 125 (ขยายช่องกรอกภารกิจพิเศษเป็น 30 งาน) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -653,9 +653,10 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเข้างานของ PT คนที่ {i+1} ผิดพลาด")
 
+    # 🌟 V125: ขยายช่องกรอกภารกิจพิเศษเป็น 30 งาน 🌟
     st.subheader("📋 ภารกิจพิเศษ")
-    with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 20 งาน)", expanded=False):
-        for i in range(20):
+    with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 30 งาน)", expanded=False):
+        for i in range(30):
             st.markdown(f"**งานที่ {i+1}**")
             p_task = st.selectbox("ชื่อคน", dropdown_names, key=f"t_name_{i}", label_visibility="collapsed")
             n_task = st.text_input("ชื่องาน", key=f"t_n_{i}", placeholder="ระบุชื่องาน")
@@ -669,11 +670,12 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเริ่ม-สิ้นสุดของงานที่ {i+1} ผิดพลาด")
 
+    # 🌟 V125: ขยายช่องกรอกล็อกภาระงานหลักเป็น 30 รายการ 🌟
     st.subheader("📌 ล็อกภาระงานหลัก")
-    with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 20 รายการ)", expanded=False):
+    with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
         opts = ['จ่าย 4', 'จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'จ่าย 11', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver 4', 'Ver 5', 'Ver 6', 'Ver 7', 'Ver 8', 'Ver 9', 'Ver 10', 'Ver PS1', 'Ver PS2', 'Ver PS3', 'Ver PS4', 'Ver PS5', 'Ver PS6', 'Ver PS7', 'Ver PS8', 'Ver PS9', 'Ver PS10', 'Match + C', 'Match + C2', 'Matching']
         maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
-        for i in range(20):
+        for i in range(30):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
             p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
             n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, key=f"m_task_{i}", label_visibility="collapsed")
