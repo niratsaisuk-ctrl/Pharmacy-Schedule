@@ -182,15 +182,14 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         s_idx, e_idx = time_to_slot(start), time_to_slot(end)
         for t in range(s_idx, e_idx): model.Add(x[p, t, task_name] == 1)
 
-    # 🌟 V126 FIX: จัดการสิทธิ PT จ่ายยา 🌟
+    reward_vars = []
+
+    # 🌟 V127 FIX: จัดการสิทธิ PT จ่ายยาและการสลับช่อง 🌟
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
         
-        # กฎพื้นฐาน: PT จ่ายได้แค่ 7, 8
         my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
-        
-        # ถ้ามี PT เกิน 2 คน ถึงจะอนุญาต 6, 9
         if len(PART_TIME) > 2: 
             my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
             
@@ -217,11 +216,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): model.Add(x[p, t, 'พัก'] == 0)
 
-        # โควตาตามกลุ่ม PT 
+        # โควตารวมการจ่ายยาของ PT แต่ละกลุ่ม
         if is_group_a: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) >= 2) 
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) >= 2) 
         elif is_group_b: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
         elif is_group_c or is_group_d: 
@@ -234,6 +231,26 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t in range(max(s_idx, e_idx - 2), e_idx):
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
+
+        # ----------------------------------------------------
+        # กฎบังคับสลับช่อง (PT Balancing) ของ Version 127
+        # ----------------------------------------------------
+        for d in my_dispense_allowed:
+            d_sum = sum(x[p, t, d] for t in range(16))
+            # แจกแต้มติดลบหนักๆ ถ้าจ่ายช่องเดิมเกิน 2 ครั้ง (1 ชม.) เพื่อบีบให้เปลี่ยนช่อง
+            over_2 = model.NewIntVar(0, 16, f'pt_over_2_{p}_{d}')
+            model.Add(over_2 >= d_sum - 2)
+            model.Add(over_2 >= 0)
+            reward_vars.append(over_2 * -80000) 
+
+        # พยายามรักษาสมดุลระหว่างช่อง 7 และ 8 ให้เท่าๆ กัน (ป้องกันการจ่าย 7 อย่างเดียว)
+        d7_sum = sum(x[p, t, 'จ่ายยา_7'] for t in range(16))
+        d8_sum = sum(x[p, t, 'จ่ายยา_8'] for t in range(16))
+        diff_78 = model.NewIntVar(-16, 16, f'diff_78_{p}')
+        model.Add(diff_78 == d7_sum - d8_sum)
+        abs_diff_78 = model.NewIntVar(0, 16, f'abs_diff_78_{p}')
+        model.AddAbsEquality(abs_diff_78, diff_78)
+        reward_vars.append(abs_diff_78 * -30000)
 
     b_group_vars_ft = {0: [], 1: [], 2: []}
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
@@ -265,8 +282,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(b_group_vars_ft[i]) <= 7) 
             model.Add(sum(b_group_vars_ft[i]) >= max(0, (total_active_ft_break // 3) - 1))
 
-    reward_vars = []
-    
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -594,7 +609,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 126 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 127 (ปรับสมดุลช่องจ่ายยา PT) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
