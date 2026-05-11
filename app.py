@@ -1,15 +1,15 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
 from datetime import datetime, timedelta, timezone
-import locale
 from ortools.sat.python import cp_model
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils import get_column_letter
 import streamlit.components.v1 as components
 
-# --- ระบบเชื่อมต่อ Google Sheets (อัปเดตใหม่ใช้ google-auth) ---
+# --- ระบบเชื่อมต่อ Google Sheets ---
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -57,7 +57,7 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database + Settings)
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
@@ -80,32 +80,58 @@ def connect_to_gsheet():
     except Exception as e:
         return None, f"เชื่อมต่อล้มเหลว: {str(e)}"
 
-def save_to_db(df, date_str):
+# 🌟 V128: ปรับปรุงฟังก์ชัน Save ให้บันทึก Settings ด้วย
+def save_to_db(df, date_str, settings_data):
     sheet_file, msg = connect_to_gsheet()
     if not sheet_file: return False, msg
     try:
+        # 1. บันทึกตารางผลลัพธ์ (Sheet หลัก)
         try:
             worksheet = sheet_file.worksheet(date_str)
             sheet_file.del_worksheet(worksheet)
         except: pass
         worksheet = sheet_file.add_worksheet(title=date_str, rows="100", cols="20")
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-        return True, "บันทึกข้อมูลขึ้น Google Sheets สำเร็จ!"
+        
+        # 2. บันทึก Settings (สร้าง Sheet ซ่อน)
+        setting_sheet_name = f"{date_str}_Settings"
+        try:
+            setting_sheet = sheet_file.worksheet(setting_sheet_name)
+            sheet_file.del_worksheet(setting_sheet)
+        except: pass
+        setting_sheet = sheet_file.add_worksheet(title=setting_sheet_name, rows="10", cols="2")
+        setting_sheet.update([["Data JSON"], [json.dumps(settings_data, ensure_ascii=False)]])
+        
+        return True, "บันทึกตารางและเงื่อนไข (Settings) ขึ้นระบบสำเร็จ!"
     except Exception as e:
         return False, f"บันทึกข้อมูลล้มเหลว: {str(e)}"
 
+# 🌟 V128: ปรับปรุงฟังก์ชัน Load ให้ดึง Settings กลับมาด้วย
 def load_from_db(date_str):
     sheet_file, msg = connect_to_gsheet()
-    if not sheet_file: return None, msg
+    if not sheet_file: return None, None, msg
     try:
+        # 1. โหลดตาราง
         worksheet = sheet_file.worksheet(date_str)
         data = worksheet.get_all_records()
-        if not data: return pd.DataFrame(), "ข้อมูลตารางของวันนี้ว่างเปล่า"
-        return pd.DataFrame(data), "Success"
+        df_result = pd.DataFrame(data) if data else pd.DataFrame()
+        
+        # 2. โหลด Settings
+        settings_result = None
+        setting_sheet_name = f"{date_str}_Settings"
+        try:
+            setting_sheet = sheet_file.worksheet(setting_sheet_name)
+            raw_json = setting_sheet.cell(2, 1).value
+            if raw_json:
+                settings_result = json.loads(raw_json)
+        except: 
+            pass # ถ้าไม่มีหน้า Setting ให้ข้ามไป
+            
+        return df_result, settings_result, "Success"
     except gspread.exceptions.WorksheetNotFound:
-        return None, f"ไม่พบข้อมูลตารางของวันที่ {date_str} ในฐานข้อมูล"
+        return None, None, f"ไม่พบข้อมูลตารางของวันที่ {date_str} ในฐานข้อมูล"
     except Exception as e:
-        return None, f"โหลดข้อมูลล้มเหลว: {str(e)}"
+        return None, None, f"โหลดข้อมูลล้มเหลว: {str(e)}"
 
 # ==========================================
 # 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
@@ -184,7 +210,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
 
-    # 🌟 V127 FIX: จัดการสิทธิ PT จ่ายยาและการสลับช่อง 🌟
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
@@ -216,7 +241,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16):
             if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): model.Add(x[p, t, 'พัก'] == 0)
 
-        # โควตารวมการจ่ายยาของ PT แต่ละกลุ่ม
         if is_group_a: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
         elif is_group_b: 
@@ -226,24 +250,18 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
 
-        # บังคับจ่ายยาตอนท้าย (สำหรับคนน้อย)
         if len(PART_TIME) <= 2:
             for t in range(max(s_idx, e_idx - 2), e_idx):
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
 
-        # ----------------------------------------------------
-        # กฎบังคับสลับช่อง (PT Balancing) ของ Version 127
-        # ----------------------------------------------------
         for d in my_dispense_allowed:
             d_sum = sum(x[p, t, d] for t in range(16))
-            # แจกแต้มติดลบหนักๆ ถ้าจ่ายช่องเดิมเกิน 2 ครั้ง (1 ชม.) เพื่อบีบให้เปลี่ยนช่อง
             over_2 = model.NewIntVar(0, 16, f'pt_over_2_{p}_{d}')
             model.Add(over_2 >= d_sum - 2)
             model.Add(over_2 >= 0)
             reward_vars.append(over_2 * -80000) 
 
-        # พยายามรักษาสมดุลระหว่างช่อง 7 และ 8 ให้เท่าๆ กัน (ป้องกันการจ่าย 7 อย่างเดียว)
         d7_sum = sum(x[p, t, 'จ่ายยา_7'] for t in range(16))
         d8_sum = sum(x[p, t, 'จ่ายยา_8'] for t in range(16))
         diff_78 = model.NewIntVar(-16, 16, f'diff_78_{p}')
@@ -609,10 +627,13 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 127 (ปรับสมดุลช่องจ่ายยา PT) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 128 (ระบบบันทึกและโหลด Settings) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
+
+# 🌟 V128: ดึงข้อมูล Setting ล่าสุดจาก session_state
+saved_settings = st.session_state.get('loaded_settings', {})
 
 leaves_input, pt_input_list, custom_tasks_input, fixed_main_tasks_input, fix_breaks_input, sick_people_input = {}, [], {}, {}, {}, []
 
@@ -639,22 +660,31 @@ with st.sidebar:
         
     st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>ระบบดึงตารางเดิมมาแก้ไขฉุกเฉิน</p>", unsafe_allow_html=True)
     if st.button("🔍 ดึงตารางเดิมของวันนี้มาแก้ไข", use_container_width=True):
-        data, msg = load_from_db(date_str)
+        data, s_data, msg = load_from_db(date_str)
         if data is not None and not data.empty:
             st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
-            st.success("✅ ดึงตารางเดิมสำเร็จ! ระบบพร้อมซ่อมตารางแล้ว")
+            st.session_state.loaded_settings = s_data if s_data else {}
+            st.success("✅ ดึงตารางเดิมและเงื่อนไขทั้งหมดสำเร็จ!")
+            st.rerun() # รีเฟรชหน้าเว็บ 1 รอบ เพื่อเติมข้อมูลลงช่อง
         else: 
             st.error(f"❌ {msg}")
                 
     st.divider()
     
+    # 🌟 ฟังก์ชันช่วยดึงค่าเริ่มต้น 🌟
+    def get_val(cat, idx, field, default="ไม่มี"):
+        try: return saved_settings[cat][idx][field]
+        except: return default
+
     st.subheader("🏖️ ผู้ที่ลาในวันนี้")
     with st.expander("คลิกเพื่อระบุผู้ลางาน (สูงสุด 5 คน)", expanded=False):
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([3, 2])
-            with c1: p_leave = st.selectbox("ชื่อ", dropdown_names, key=f"l_name_{i}", label_visibility="collapsed")
-            with c2: t_leave = st.selectbox("ประเภท", ["ทั้งวัน", "เช้า", "บ่าย"], key=f"l_type_{i}", label_visibility="collapsed")
+            def_name = get_val("leaves", i, "name", "ไม่มี")
+            def_type = get_val("leaves", i, "type", "ทั้งวัน")
+            with c1: p_leave = st.selectbox("ชื่อ", dropdown_names, index=dropdown_names.index(def_name) if def_name in dropdown_names else 0, key=f"l_name_{i}", label_visibility="collapsed")
+            with c2: t_leave = st.selectbox("ประเภท", ["ทั้งวัน", "เช้า", "บ่าย"], index=["ทั้งวัน", "เช้า", "บ่าย"].index(def_type), key=f"l_type_{i}", label_visibility="collapsed")
             st.divider()
             if p_leave != "ไม่มี": leaves_input[p_leave] = t_leave
 
@@ -662,11 +692,15 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุ Part-time (สูงสุด 5 คน)", expanded=False):
         for i in range(5):
             st.markdown(f"**PT คนที่ {i+1}**")
-            pt_name = st.text_input("ชื่อ PT", key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
+            def_n = get_val("pt", i, "name", "")
+            def_s = get_val("pt", i, "start", "08.30")
+            def_e = get_val("pt", i, "end", "16.30")
+            def_b = get_val("pt", i, "break", True)
+            pt_name = st.text_input("ชื่อ PT", value=def_n, key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
             cc1, cc2, cc3 = st.columns([2, 2, 2])
-            with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"pt_s_{i}")
-            with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, index=16, key=f"pt_e_{i}")
-            with cc3: pt_b = st.checkbox("พัก 12.30", value=True, key=f"pt_b_{i}")
+            with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"pt_s_{i}")
+            with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"pt_e_{i}")
+            with cc3: pt_b = st.checkbox("พัก 12.30", value=def_b, key=f"pt_b_{i}")
             st.divider()
             if pt_name.strip() != "":
                 if VALID_TIMES.index(pt_s) < VALID_TIMES.index(pt_e):
@@ -674,16 +708,19 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเข้างานของ PT คนที่ {i+1} ผิดพลาด")
 
-    # ขยายเป็น 30 งาน
     st.subheader("📋 ภารกิจพิเศษ")
     with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 30 งาน)", expanded=False):
         for i in range(30):
             st.markdown(f"**งานที่ {i+1}**")
-            p_task = st.selectbox("ชื่อคน", dropdown_names, key=f"t_name_{i}", label_visibility="collapsed")
-            n_task = st.text_input("ชื่องาน", key=f"t_n_{i}", placeholder="ระบุชื่องาน")
+            def_p = get_val("tasks", i, "name", "ไม่มี")
+            def_n = get_val("tasks", i, "task", "")
+            def_s = get_val("tasks", i, "start", "08.30")
+            def_e = get_val("tasks", i, "end", "09.30")
+            p_task = st.selectbox("ชื่อคน", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"t_name_{i}", label_visibility="collapsed")
+            n_task = st.text_input("ชื่องาน", value=def_n, key=f"t_n_{i}", placeholder="ระบุชื่องาน")
             c1, c2 = st.columns(2)
-            with c1: s_task = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"t_s_{i}")
-            with c2: e_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=2, key=f"t_e_{i}")
+            with c1: s_task = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"t_s_{i}")
+            with c2: e_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"t_e_{i}")
             st.divider()
             if p_task != "ไม่มี" and n_task.strip() != "":
                 if VALID_TIMES.index(s_task) < VALID_TIMES.index(e_task):
@@ -691,18 +728,21 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเริ่ม-สิ้นสุดของงานที่ {i+1} ผิดพลาด")
 
-    # ขยายเป็น 30 งาน
     st.subheader("📌 ล็อกภาระงานหลัก")
     with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
         opts = ['จ่าย 4', 'จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'จ่าย 11', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver 4', 'Ver 5', 'Ver 6', 'Ver 7', 'Ver 8', 'Ver 9', 'Ver 10', 'Ver PS1', 'Ver PS2', 'Ver PS3', 'Ver PS4', 'Ver PS5', 'Ver PS6', 'Ver PS7', 'Ver PS8', 'Ver PS9', 'Ver PS10', 'Match + C', 'Match + C2', 'Matching']
         maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
         for i in range(30):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
-            p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
-            n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, key=f"m_task_{i}", label_visibility="collapsed")
+            def_p = get_val("fixed", i, "name", "ไม่มี")
+            def_m = get_val("fixed", i, "task", "เลือกภาระงาน")
+            def_s = get_val("fixed", i, "start", "08.30")
+            def_e = get_val("fixed", i, "end", "09.30")
+            p_m_task = st.selectbox("ชื่อคน", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"m_name_{i}", label_visibility="collapsed")
+            n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, index=(["เลือกภาระงาน"] + opts).index(def_m) if def_m in ["เลือกภาระงาน"] + opts else 0, key=f"m_task_{i}", label_visibility="collapsed")
             c1, c2 = st.columns(2)
-            with c1: s_m_task = st.selectbox("เริ่ม", VALID_TIMES, index=0, key=f"m_s_{i}")
-            with c2: e_m_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=2, key=f"m_e_{i}")
+            with c1: s_m_task = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"m_s_{i}")
+            with c2: e_m_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"m_e_{i}")
             st.divider()
             if p_m_task != "ไม่มี" and n_m_task != "เลือกภาระงาน":
                 if VALID_TIMES.index(s_m_task) < VALID_TIMES.index(e_m_task):
@@ -714,7 +754,8 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุผู้ป่วย (สูงสุด 3 คน)", expanded=False):
         st.markdown("<p style='font-size: 12px; color: gray;'>ระบบจะจัดให้ทำงาน Ver หรือ Matching ตลอดวัน</p>", unsafe_allow_html=True)
         for i in range(3):
-            p_sick = st.selectbox(f"คนที่ {i+1}", dropdown_names, key=f"sick_{i}")
+            def_sick = get_val("sick", i, "name", "ไม่มี")
+            p_sick = st.selectbox(f"คนที่ {i+1}", dropdown_names, index=dropdown_names.index(def_sick) if def_sick in dropdown_names else 0, key=f"sick_{i}")
             st.divider()
             if p_sick != "ไม่มี": sick_people_input.append(p_sick)
 
@@ -728,13 +769,25 @@ with st.sidebar:
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([2, 3])
-            with c1: p_b = st.selectbox("ชื่อ", dropdown_names, key=f"b_name_{i}", label_visibility="collapsed")
-            with c2: t_b = st.selectbox("รอบพัก", break_choices, key=f"b_time_{i}", label_visibility="collapsed")
+            def_p = get_val("breaks", i, "name", "ไม่มี")
+            def_b = get_val("breaks", i, "break", break_choices[0])
+            with c1: p_b = st.selectbox("ชื่อ", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"b_name_{i}", label_visibility="collapsed")
+            with c2: t_b = st.selectbox("รอบพัก", break_choices, index=break_choices.index(def_b) if def_b in break_choices else 0, key=f"b_time_{i}", label_visibility="collapsed")
             st.divider()
             if p_b != "ไม่มี":
                 if "รอบที่ 1" in t_b: fix_breaks_input[p_b] = 0
                 elif "รอบที่ 2" in t_b: fix_breaks_input[p_b] = 1
                 elif "รอบที่ 3" in t_b: fix_breaks_input[p_b] = 2
+
+    # 🌟 เตรียม Data สำหรับบันทึก Settings 🌟
+    current_settings = {
+        "leaves": [{"name": p, "type": t} for p, t in leaves_input.items()],
+        "pt": pt_input_list,
+        "tasks": [{"name": k[0], "start": k[1], "end": k[2], "task": v} for k, v in custom_tasks_input.items()],
+        "fixed": [{"name": k[0], "start": k[1], "end": k[2], "task": list(maps.keys())[list(maps.values()).index(v)]} for k, v in fixed_main_tasks_input.items()],
+        "sick": [{"name": p} for p in sick_people_input],
+        "breaks": [{"name": p, "break": break_choices[b]} for p, b in fix_breaks_input.items()]
+    }
 
 if st.button("🚀 เริ่มจัดตาราง / ซ่อมตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
     with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
@@ -761,7 +814,7 @@ if st.session_state.schedule_df is not None and st.session_state.run_status == "
     
     with col_db:
         if st.button("💾 บันทึกตารางลงฐานข้อมูล (Google Sheets)", use_container_width=True):
-            success, msg = save_to_db(df_to_show, date_str)
+            success, msg = save_to_db(df_to_show, date_str, current_settings)
             if success: 
                 st.success("✅ " + msg)
             else: 
