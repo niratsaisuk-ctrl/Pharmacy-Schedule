@@ -3,13 +3,14 @@ import pandas as pd
 import io
 import json
 from datetime import datetime, timedelta, timezone
+import locale
 from ortools.sat.python import cp_model
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils import get_column_letter
 import streamlit.components.v1 as components
 
-# --- ระบบเชื่อมต่อ Google Sheets ---
+# --- ระบบเชื่อมต่อ Google Sheets (อัปเดตใหม่ใช้ google-auth) ---
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -48,16 +49,16 @@ def get_header_color(t_idx, day_of_week):
     return None
 
 header_color_map = {
-    'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
-    'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
-    'pink': PatternFill(start_color='F8CECC', end_color='F8CECC', fill_type='solid'),
-    'purple': PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid'),
-    'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
+    'orange': PatternFill(start_color='FFCC99', end_color='FFCC99', fill_type='solid'),
+    'yellow': PatternFill(start_color='FFD966', end_color='FFD966', fill_type='solid'),
+    'pink': PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid'),
+    'purple': PatternFill(start_color='E6E6FA', end_color='E6E6FA', fill_type='solid'),
+    'blue': PatternFill(start_color='B3E5FC', end_color='B3E5FC', fill_type='solid')
 }
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database + Settings)
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
@@ -80,12 +81,10 @@ def connect_to_gsheet():
     except Exception as e:
         return None, f"เชื่อมต่อล้มเหลว: {str(e)}"
 
-# 🌟 V128: ปรับปรุงฟังก์ชัน Save ให้บันทึก Settings ด้วย
 def save_to_db(df, date_str, settings_data):
     sheet_file, msg = connect_to_gsheet()
     if not sheet_file: return False, msg
     try:
-        # 1. บันทึกตารางผลลัพธ์ (Sheet หลัก)
         try:
             worksheet = sheet_file.worksheet(date_str)
             sheet_file.del_worksheet(worksheet)
@@ -93,7 +92,6 @@ def save_to_db(df, date_str, settings_data):
         worksheet = sheet_file.add_worksheet(title=date_str, rows="100", cols="20")
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         
-        # 2. บันทึก Settings (สร้าง Sheet ซ่อน)
         setting_sheet_name = f"{date_str}_Settings"
         try:
             setting_sheet = sheet_file.worksheet(setting_sheet_name)
@@ -106,17 +104,14 @@ def save_to_db(df, date_str, settings_data):
     except Exception as e:
         return False, f"บันทึกข้อมูลล้มเหลว: {str(e)}"
 
-# 🌟 V128: ปรับปรุงฟังก์ชัน Load ให้ดึง Settings กลับมาด้วย
 def load_from_db(date_str):
     sheet_file, msg = connect_to_gsheet()
     if not sheet_file: return None, None, msg
     try:
-        # 1. โหลดตาราง
         worksheet = sheet_file.worksheet(date_str)
         data = worksheet.get_all_records()
         df_result = pd.DataFrame(data) if data else pd.DataFrame()
         
-        # 2. โหลด Settings
         settings_result = None
         setting_sheet_name = f"{date_str}_Settings"
         try:
@@ -125,7 +120,7 @@ def load_from_db(date_str):
             if raw_json:
                 settings_result = json.loads(raw_json)
         except: 
-            pass # ถ้าไม่มีหน้า Setting ให้ข้ามไป
+            pass 
             
         return df_result, settings_result, "Success"
     except gspread.exceptions.WorksheetNotFound:
@@ -557,16 +552,27 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base_style = "text-align: center; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
-    elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4; color: black;' 
-    elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC; color: black;' 
-    elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: #FF0000; font-weight: bold;' 
-    elif 'Ver PS' in val_str: return base_style + 'background-color: #E1D5E7; color: black;' 
-    elif 'Ver' in val_str: return base_style + 'background-color: #FFE6CC; color: black;' 
-    elif val_str == 'พัก': return base_style + 'background-color: #F8CECC; color: black;' 
-    elif val_str in ['-', 'ว่าง']: return base_style + 'background-color: #F5F5F5; color: black;' 
-    else: return base_style + 'background-color: #E6E6E6; color: black;' 
+    base_style = "text-align: center; color: black; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): 
+        return base_style + 'background-color: #FFD966; font-weight: bold;' 
+    elif 'จ่าย ' in val_str: 
+        return base_style + 'background-color: #A9DFBF;' 
+    elif val_str == 'Matching': 
+        return base_style + 'background-color: #B3E5FC;' 
+    elif 'Match' in val_str: 
+        return base_style + 'background-color: #B3E5FC; color: red; font-weight: bold;' 
+    elif 'Ver PS' in val_str: 
+        return base_style + 'background-color: #E6E6FA;' 
+    elif 'Ver' in val_str: 
+        return base_style + 'background-color: #FFCC99;' 
+    elif val_str == 'พัก': 
+        return base_style + 'background-color: #FFB6C1;' 
+    elif val_str == 'ลา': 
+        return base_style + 'background-color: #FF69B4; color: white; font-weight: bold;' 
+    elif val_str in ['-', 'ว่าง']: 
+        return base_style + 'background-color: #F0F0F0; color: #808080;' 
+    else: 
+        return base_style + 'background-color: #D3D3D3;' 
 
 # ==========================================
 # 📸 ฟังก์ชันสร้าง HTML Table สำหรับโหลด PNG
@@ -575,45 +581,49 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
     thai_date_str = get_thai_date(selected_date)
     def get_cell_style(val):
         val_str = str(val)
-        bg, color, weight = "#E6E6E6", "black", "normal"
-        if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
-        elif 'จ่าย ' in val_str: bg = "#D5E8D4"
-        elif val_str == 'Matching': bg = "#DAE8FC"
-        elif 'Match' in val_str: bg, color, weight = "#DAE8FC", "#FF0000", "bold"
-        elif 'Ver PS' in val_str: bg = "#E1D5E7"
-        elif 'Ver' in val_str: bg = "#FFE6CC"
-        elif val_str == 'พัก': bg = "#F8CECC"
-        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
+        bg, color, weight = "#D3D3D3", "black", "normal" 
+        if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): 
+            bg, weight = "#FFD966", "bold"
+        elif 'จ่าย ' in val_str: bg = "#A9DFBF"
+        elif val_str == 'Matching': bg = "#B3E5FC"
+        elif 'Match' in val_str: bg, color, weight = "#B3E5FC", "red", "bold"
+        elif 'Ver PS' in val_str: bg = "#E6E6FA"
+        elif 'Ver' in val_str: bg = "#FFCC99"
+        elif val_str == 'พัก': bg = "#FFB6C1"
+        elif val_str == 'ลา': bg, color, weight = "#FF69B4", "white", "bold"
+        elif val_str in ['-', 'ว่าง']: bg, color = "#F0F0F0", "#808080"
+        
         return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
-            if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFE6CC' 
-            if t_idx in [2]: return '#FFF2CC'                 
-            if t_idx in [5, 6, 9, 10]: return '#F8CECC'         
-            if t_idx in [7, 8]: return '#E1D5E7'              
-            if t_idx in [13, 14, 15]: return '#DAE8FC'          
+            if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFCC99' 
+            if t_idx in [2]: return '#FFD966'                 
+            if t_idx in [5, 6, 9, 10]: return '#FFB6C1'         
+            if t_idx in [7, 8]: return '#E6E6FA'              
+            if t_idx in [13, 14, 15]: return '#B3E5FC'          
         else: 
-            if t_idx in [0, 1, 4, 5, 12, 13]: return '#FFE6CC' 
-            if t_idx in [2, 3]: return '#FFF2CC'              
-            if t_idx in [6, 7, 10, 11]: return '#F8CECC'        
-            if t_idx in [8, 9]: return '#E1D5E7'              
-            if t_idx in [14, 15]: return '#DAE8FC'              
+            if t_idx in [0, 1, 4, 5, 12, 13]: return '#FFCC99' 
+            if t_idx in [2, 3]: return '#FFD966'              
+            if t_idx in [6, 7, 10, 11]: return '#FFB6C1'        
+            if t_idx in [8, 9]: return '#E6E6FA'              
+            if t_idx in [14, 15]: return '#B3E5FC'              
         return '#FFFFFF'
 
     cols = df.columns.tolist()
     num_cols = len(cols)
-    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px;'>ประจำ{thai_date_str}</td></tr><tr>"
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px; color: black;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px; color: black;'>ประจำ{thai_date_str}</td></tr><tr>"
     for i, col in enumerate(cols):
         bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
-        html += f"<th style='background-color: {bg}; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
+        html += f"<th style='background-color: {bg}; color: black; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
     html += "</tr>"
     for _, row in df.iterrows():
         html += "<tr style='height: 50px;'>"
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
-            if i == 0 or _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
+            if i == 0: style = "background-color: #FFFFFF; color: black; font-weight: bold; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px;"
+            if _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
             html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
     html += "</table></div>"
@@ -627,13 +637,10 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 128 (ระบบบันทึกและโหลด Settings) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 129 (ฉีดข้อมูลเข้า Session State โดยตรง) | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
-
-# 🌟 V128: ดึงข้อมูล Setting ล่าสุดจาก session_state
-saved_settings = st.session_state.get('loaded_settings', {})
 
 leaves_input, pt_input_list, custom_tasks_input, fixed_main_tasks_input, fix_breaks_input, sick_people_input = {}, [], {}, {}, {}, []
 
@@ -653,6 +660,11 @@ with st.sidebar:
     IS_MWF = selected_date.weekday() in [0, 2, 4]
     DAY_OF_WEEK = 'Wed_Fri' if selected_date.weekday() in [2, 4] else 'Normal'
     
+    if DAY_OF_WEEK == 'Normal':
+        break_choices = ["รอบที่ 1 (11.00 - 12.00)", "รอบที่ 2 (12.00 - 13.00)", "รอบที่ 3 (13.00 - 14.00)"]
+    else:
+        break_choices = ["รอบที่ 1 (11.30 - 12.30)", "รอบที่ 2 (12.30 - 13.30)", "รอบที่ 3 (13.30 - 14.30)"]
+    
     if selected_date.weekday() in [2, 4]: 
         st.markdown("<p style='color:green; font-size:14px; margin-top:-10px;'>✔️ ปรับตาราง วันพุธ/ศุกร์ ให้อัตโนมัติ</p>", unsafe_allow_html=True)
     else:
@@ -663,28 +675,76 @@ with st.sidebar:
         data, s_data, msg = load_from_db(date_str)
         if data is not None and not data.empty:
             st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
-            st.session_state.loaded_settings = s_data if s_data else {}
+            
+            # --- 🌟 ทำการล้างค่าเก่าและยัดค่าใหม่ใส่ Session State โดยตรง 🌟 ---
+            if s_data:
+                # 1. รีเซ็ตทุกช่องให้สะอาดก่อน
+                for i in range(5):
+                    st.session_state[f"l_name_{i}"] = "ไม่มี"
+                    st.session_state[f"l_type_{i}"] = "ทั้งวัน"
+                    st.session_state[f"pt_n_{i}"] = ""
+                    st.session_state[f"pt_s_{i}"] = "08.30"
+                    st.session_state[f"pt_e_{i}"] = "16.30"
+                    st.session_state[f"pt_b_{i}"] = True
+                    st.session_state[f"b_name_{i}"] = "ไม่มี"
+                    st.session_state[f"b_time_{i}"] = break_choices[0]
+                for i in range(30):
+                    st.session_state[f"t_name_{i}"] = "ไม่มี"
+                    st.session_state[f"t_n_{i}"] = ""
+                    st.session_state[f"t_s_{i}"] = "08.30"
+                    st.session_state[f"t_e_{i}"] = "09.30"
+                    st.session_state[f"m_name_{i}"] = "ไม่มี"
+                    st.session_state[f"m_task_{i}"] = "เลือกภาระงาน"
+                    st.session_state[f"m_s_{i}"] = "08.30"
+                    st.session_state[f"m_e_{i}"] = "09.30"
+                for i in range(3):
+                    st.session_state[f"sick_{i}"] = "ไม่มี"
+
+                # 2. เติมข้อมูลที่โหลดมาลงไป
+                for i, item in enumerate(s_data.get("leaves", [])):
+                    if i < 5:
+                        st.session_state[f"l_name_{i}"] = item["name"]
+                        st.session_state[f"l_type_{i}"] = item["type"]
+                for i, item in enumerate(s_data.get("pt", [])):
+                    if i < 5:
+                        st.session_state[f"pt_n_{i}"] = item["name"]
+                        st.session_state[f"pt_s_{i}"] = item["start"]
+                        st.session_state[f"pt_e_{i}"] = item["end"]
+                        st.session_state[f"pt_b_{i}"] = item.get("has_break", True)
+                for i, item in enumerate(s_data.get("tasks", [])):
+                    if i < 30:
+                        st.session_state[f"t_name_{i}"] = item["name"]
+                        st.session_state[f"t_n_{i}"] = item["task"]
+                        st.session_state[f"t_s_{i}"] = item["start"]
+                        st.session_state[f"t_e_{i}"] = item["end"]
+                for i, item in enumerate(s_data.get("fixed", [])):
+                    if i < 30:
+                        st.session_state[f"m_name_{i}"] = item["name"]
+                        st.session_state[f"m_task_{i}"] = item["task"]
+                        st.session_state[f"m_s_{i}"] = item["start"]
+                        st.session_state[f"m_e_{i}"] = item["end"]
+                for i, item in enumerate(s_data.get("sick", [])):
+                    if i < 3:
+                        st.session_state[f"sick_{i}"] = item["name"]
+                for i, item in enumerate(s_data.get("breaks", [])):
+                    if i < 5:
+                        st.session_state[f"b_name_{i}"] = item["name"]
+                        st.session_state[f"b_time_{i}"] = item["break"]
+                        
             st.success("✅ ดึงตารางเดิมและเงื่อนไขทั้งหมดสำเร็จ!")
-            st.rerun() # รีเฟรชหน้าเว็บ 1 รอบ เพื่อเติมข้อมูลลงช่อง
+            st.rerun() # บังคับหน้าเว็บโหลดตัวเอง 1 รอบ เพื่อแสดงข้อมูลที่เพิ่งยัดเข้าไป
         else: 
             st.error(f"❌ {msg}")
                 
     st.divider()
     
-    # 🌟 ฟังก์ชันช่วยดึงค่าเริ่มต้น 🌟
-    def get_val(cat, idx, field, default="ไม่มี"):
-        try: return saved_settings[cat][idx][field]
-        except: return default
-
     st.subheader("🏖️ ผู้ที่ลาในวันนี้")
     with st.expander("คลิกเพื่อระบุผู้ลางาน (สูงสุด 5 คน)", expanded=False):
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([3, 2])
-            def_name = get_val("leaves", i, "name", "ไม่มี")
-            def_type = get_val("leaves", i, "type", "ทั้งวัน")
-            with c1: p_leave = st.selectbox("ชื่อ", dropdown_names, index=dropdown_names.index(def_name) if def_name in dropdown_names else 0, key=f"l_name_{i}", label_visibility="collapsed")
-            with c2: t_leave = st.selectbox("ประเภท", ["ทั้งวัน", "เช้า", "บ่าย"], index=["ทั้งวัน", "เช้า", "บ่าย"].index(def_type), key=f"l_type_{i}", label_visibility="collapsed")
+            with c1: p_leave = st.selectbox("ชื่อ", dropdown_names, key=f"l_name_{i}", label_visibility="collapsed")
+            with c2: t_leave = st.selectbox("ประเภท", ["ทั้งวัน", "เช้า", "บ่าย"], key=f"l_type_{i}", label_visibility="collapsed")
             st.divider()
             if p_leave != "ไม่มี": leaves_input[p_leave] = t_leave
 
@@ -692,15 +752,11 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุ Part-time (สูงสุด 5 คน)", expanded=False):
         for i in range(5):
             st.markdown(f"**PT คนที่ {i+1}**")
-            def_n = get_val("pt", i, "name", "")
-            def_s = get_val("pt", i, "start", "08.30")
-            def_e = get_val("pt", i, "end", "16.30")
-            def_b = get_val("pt", i, "break", True)
-            pt_name = st.text_input("ชื่อ PT", value=def_n, key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
+            pt_name = st.text_input("ชื่อ PT", key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
             cc1, cc2, cc3 = st.columns([2, 2, 2])
-            with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"pt_s_{i}")
-            with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"pt_e_{i}")
-            with cc3: pt_b = st.checkbox("พัก 12.30", value=def_b, key=f"pt_b_{i}")
+            with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, key=f"pt_s_{i}")
+            with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, key=f"pt_e_{i}")
+            with cc3: pt_b = st.checkbox("พัก 12.30", key=f"pt_b_{i}")
             st.divider()
             if pt_name.strip() != "":
                 if VALID_TIMES.index(pt_s) < VALID_TIMES.index(pt_e):
@@ -712,15 +768,11 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 30 งาน)", expanded=False):
         for i in range(30):
             st.markdown(f"**งานที่ {i+1}**")
-            def_p = get_val("tasks", i, "name", "ไม่มี")
-            def_n = get_val("tasks", i, "task", "")
-            def_s = get_val("tasks", i, "start", "08.30")
-            def_e = get_val("tasks", i, "end", "09.30")
-            p_task = st.selectbox("ชื่อคน", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"t_name_{i}", label_visibility="collapsed")
-            n_task = st.text_input("ชื่องาน", value=def_n, key=f"t_n_{i}", placeholder="ระบุชื่องาน")
+            p_task = st.selectbox("ชื่อคน", dropdown_names, key=f"t_name_{i}", label_visibility="collapsed")
+            n_task = st.text_input("ชื่องาน", key=f"t_n_{i}", placeholder="ระบุชื่องาน")
             c1, c2 = st.columns(2)
-            with c1: s_task = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"t_s_{i}")
-            with c2: e_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"t_e_{i}")
+            with c1: s_task = st.selectbox("เริ่ม", VALID_TIMES, key=f"t_s_{i}")
+            with c2: e_task = st.selectbox("สิ้นสุด", VALID_TIMES, key=f"t_e_{i}")
             st.divider()
             if p_task != "ไม่มี" and n_task.strip() != "":
                 if VALID_TIMES.index(s_task) < VALID_TIMES.index(e_task):
@@ -734,15 +786,11 @@ with st.sidebar:
         maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
         for i in range(30):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
-            def_p = get_val("fixed", i, "name", "ไม่มี")
-            def_m = get_val("fixed", i, "task", "เลือกภาระงาน")
-            def_s = get_val("fixed", i, "start", "08.30")
-            def_e = get_val("fixed", i, "end", "09.30")
-            p_m_task = st.selectbox("ชื่อคน", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"m_name_{i}", label_visibility="collapsed")
-            n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, index=(["เลือกภาระงาน"] + opts).index(def_m) if def_m in ["เลือกภาระงาน"] + opts else 0, key=f"m_task_{i}", label_visibility="collapsed")
+            p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
+            n_m_task = st.selectbox("ภาระงาน", ["เลือกภาระงาน"] + opts, key=f"m_task_{i}", label_visibility="collapsed")
             c1, c2 = st.columns(2)
-            with c1: s_m_task = st.selectbox("เริ่ม", VALID_TIMES, index=VALID_TIMES.index(def_s), key=f"m_s_{i}")
-            with c2: e_m_task = st.selectbox("สิ้นสุด", VALID_TIMES, index=VALID_TIMES.index(def_e), key=f"m_e_{i}")
+            with c1: s_m_task = st.selectbox("เริ่ม", VALID_TIMES, key=f"m_s_{i}")
+            with c2: e_m_task = st.selectbox("สิ้นสุด", VALID_TIMES, key=f"m_e_{i}")
             st.divider()
             if p_m_task != "ไม่มี" and n_m_task != "เลือกภาระงาน":
                 if VALID_TIMES.index(s_m_task) < VALID_TIMES.index(e_m_task):
@@ -754,25 +802,17 @@ with st.sidebar:
     with st.expander("คลิกเพื่อระบุผู้ป่วย (สูงสุด 3 คน)", expanded=False):
         st.markdown("<p style='font-size: 12px; color: gray;'>ระบบจะจัดให้ทำงาน Ver หรือ Matching ตลอดวัน</p>", unsafe_allow_html=True)
         for i in range(3):
-            def_sick = get_val("sick", i, "name", "ไม่มี")
-            p_sick = st.selectbox(f"คนที่ {i+1}", dropdown_names, index=dropdown_names.index(def_sick) if def_sick in dropdown_names else 0, key=f"sick_{i}")
+            p_sick = st.selectbox(f"คนที่ {i+1}", dropdown_names, key=f"sick_{i}")
             st.divider()
             if p_sick != "ไม่มี": sick_people_input.append(p_sick)
 
     st.subheader("🍱 ล็อกเวลาพักเฉพาะบุคคล")
     with st.expander("คลิกเพื่อล็อกเวลาพัก (สูงสุด 5 คน)", expanded=False):
-        if DAY_OF_WEEK == 'Normal':
-            break_choices = ["รอบที่ 1 (11.00 - 12.00)", "รอบที่ 2 (12.00 - 13.00)", "รอบที่ 3 (13.00 - 14.00)"]
-        else:
-            break_choices = ["รอบที่ 1 (11.30 - 12.30)", "รอบที่ 2 (12.30 - 13.30)", "รอบที่ 3 (13.30 - 14.30)"]
-            
         for i in range(5):
             st.markdown(f"**คนที่ {i+1}**")
             c1, c2 = st.columns([2, 3])
-            def_p = get_val("breaks", i, "name", "ไม่มี")
-            def_b = get_val("breaks", i, "break", break_choices[0])
-            with c1: p_b = st.selectbox("ชื่อ", dropdown_names, index=dropdown_names.index(def_p) if def_p in dropdown_names else 0, key=f"b_name_{i}", label_visibility="collapsed")
-            with c2: t_b = st.selectbox("รอบพัก", break_choices, index=break_choices.index(def_b) if def_b in break_choices else 0, key=f"b_time_{i}", label_visibility="collapsed")
+            with c1: p_b = st.selectbox("ชื่อ", dropdown_names, key=f"b_name_{i}", label_visibility="collapsed")
+            with c2: t_b = st.selectbox("รอบพัก", break_choices, key=f"b_time_{i}", label_visibility="collapsed")
             st.divider()
             if p_b != "ไม่มี":
                 if "รอบที่ 1" in t_b: fix_breaks_input[p_b] = 0
