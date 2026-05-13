@@ -49,11 +49,11 @@ def get_header_color(t_idx, day_of_week):
     return None
 
 header_color_map = {
-    'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
-    'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
-    'pink': PatternFill(start_color='F8CECC', end_color='F8CECC', fill_type='solid'),
-    'purple': PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid'),
-    'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
+    'orange': PatternFill(start_color='FFCC99', end_color='FFCC99', fill_type='solid'),
+    'yellow': PatternFill(start_color='FFD966', end_color='FFD966', fill_type='solid'),
+    'pink': PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid'),
+    'purple': PatternFill(start_color='E6E6FA', end_color='E6E6FA', fill_type='solid'),
+    'blue': PatternFill(start_color='B3E5FC', end_color='B3E5FC', fill_type='solid')
 }
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
@@ -407,7 +407,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         model.Add(done_disp_7 + done_disp_8 <= 1)
 
-        model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 3)
+        # 🌟 V133 FIX: จำกัด Match+C ไม่เกิน 1 ชั่วโมง (2 สล็อต) ต่อคนต่อวัน 🌟
+        model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 2)
 
     model.Add(sum(is_disp_7_vars) <= 2) 
 
@@ -553,16 +554,27 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base_style = "text-align: center; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
-    elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4; color: black;' 
-    elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC; color: black;' 
-    elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: #FF0000; font-weight: bold;' 
-    elif 'Ver PS' in val_str: return base_style + 'background-color: #E1D5E7; color: black;' 
-    elif 'Ver' in val_str: return base_style + 'background-color: #FFE6CC; color: black;' 
-    elif val_str == 'พัก': return base_style + 'background-color: #F8CECC; color: black;' 
-    elif val_str in ['-', 'ว่าง']: return base_style + 'background-color: #F5F5F5; color: black;' 
-    else: return base_style + 'background-color: #E6E6E6; color: black;' 
+    base_style = "text-align: center; color: black; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): 
+        return base_style + 'background-color: #FFD966; font-weight: bold;' 
+    elif 'จ่าย ' in val_str: 
+        return base_style + 'background-color: #A9DFBF;' 
+    elif val_str == 'Matching': 
+        return base_style + 'background-color: #B3E5FC;' 
+    elif 'Match' in val_str: 
+        return base_style + 'background-color: #B3E5FC; color: red; font-weight: bold;' 
+    elif 'Ver PS' in val_str: 
+        return base_style + 'background-color: #E6E6FA;' 
+    elif 'Ver' in val_str: 
+        return base_style + 'background-color: #FFCC99;' 
+    elif val_str == 'พัก': 
+        return base_style + 'background-color: #FFB6C1;' 
+    elif val_str == 'ลา': 
+        return base_style + 'background-color: #FF69B4; color: white; font-weight: bold;' 
+    elif val_str in ['-', 'ว่าง']: 
+        return base_style + 'background-color: #F0F0F0; color: #808080;' 
+    else: 
+        return base_style + 'background-color: #D3D3D3;' 
 
 # ==========================================
 # 📸 ฟังก์ชันสร้าง HTML Table สำหรับโหลด PNG
@@ -571,45 +583,49 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
     thai_date_str = get_thai_date(selected_date)
     def get_cell_style(val):
         val_str = str(val)
-        bg, color, weight = "#E6E6E6", "black", "normal"
-        if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
-        elif 'จ่าย ' in val_str: bg = "#D5E8D4"
-        elif val_str == 'Matching': bg = "#DAE8FC"
-        elif 'Match' in val_str: bg, color, weight = "#DAE8FC", "#FF0000", "bold"
-        elif 'Ver PS' in val_str: bg = "#E1D5E7"
-        elif 'Ver' in val_str: bg = "#FFE6CC"
-        elif val_str == 'พัก': bg = "#F8CECC"
-        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
+        bg, color, weight = "#D3D3D3", "black", "normal" 
+        if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): 
+            bg, weight = "#FFD966", "bold"
+        elif 'จ่าย ' in val_str: bg = "#A9DFBF"
+        elif val_str == 'Matching': bg = "#B3E5FC"
+        elif 'Match' in val_str: bg, color, weight = "#B3E5FC", "red", "bold"
+        elif 'Ver PS' in val_str: bg = "#E6E6FA"
+        elif 'Ver' in val_str: bg = "#FFCC99"
+        elif val_str == 'พัก': bg = "#FFB6C1"
+        elif val_str == 'ลา': bg, color, weight = "#FF69B4", "white", "bold"
+        elif val_str in ['-', 'ว่าง']: bg, color = "#F0F0F0", "#808080"
+        
         return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
-            if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFE6CC' 
-            if t_idx in [2]: return '#FFF2CC'                 
-            if t_idx in [5, 6, 9, 10]: return '#F8CECC'         
-            if t_idx in [7, 8]: return '#E1D5E7'              
-            if t_idx in [13, 14, 15]: return '#DAE8FC'          
+            if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFCC99' 
+            if t_idx in [2]: return '#FFD966'                 
+            if t_idx in [5, 6, 9, 10]: return '#FFB6C1'         
+            if t_idx in [7, 8]: return '#E6E6FA'              
+            if t_idx in [13, 14, 15]: return '#B3E5FC'          
         else: 
-            if t_idx in [0, 1, 4, 5, 12, 13]: return '#FFE6CC' 
-            if t_idx in [2, 3]: return '#FFF2CC'              
-            if t_idx in [6, 7, 10, 11]: return '#F8CECC'        
-            if t_idx in [8, 9]: return '#E1D5E7'              
-            if t_idx in [14, 15]: return '#DAE8FC'              
+            if t_idx in [0, 1, 4, 5, 12, 13]: return '#FFCC99' 
+            if t_idx in [2, 3]: return '#FFD966'              
+            if t_idx in [6, 7, 10, 11]: return '#FFB6C1'        
+            if t_idx in [8, 9]: return '#E6E6FA'              
+            if t_idx in [14, 15]: return '#B3E5FC'              
         return '#FFFFFF'
 
     cols = df.columns.tolist()
     num_cols = len(cols)
-    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px;'>ประจำ{thai_date_str}</td></tr><tr>"
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px; color: black;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px; color: black;'>ประจำ{thai_date_str}</td></tr><tr>"
     for i, col in enumerate(cols):
         bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
-        html += f"<th style='background-color: {bg}; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
+        html += f"<th style='background-color: {bg}; color: black; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
     html += "</tr>"
     for _, row in df.iterrows():
         html += "<tr style='height: 50px;'>"
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
-            if i == 0 or _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
+            if i == 0: style = "background-color: #FFFFFF; color: black; font-weight: bold; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px;"
+            if _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
             html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
     html += "</table></div>"
@@ -623,7 +639,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 132 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 133 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -769,7 +785,7 @@ with st.sidebar:
     st.subheader("📌 ล็อกภาระงานหลัก")
     with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
         opts = ['จ่าย 4', 'จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'จ่าย 11', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver 4', 'Ver 5', 'Ver 6', 'Ver 7', 'Ver 8', 'Ver 9', 'Ver 10', 'Ver PS1', 'Ver PS2', 'Ver PS3', 'Ver PS4', 'Ver PS5', 'Ver PS6', 'Ver PS7', 'Ver PS8', 'Ver PS9', 'Ver PS10', 'Match + C', 'Match + C2', 'Matching']
-        maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
+        maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver 5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
         for i in range(30):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
             p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
