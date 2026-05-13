@@ -10,7 +10,7 @@ from openpyxl.worksheet.page import PageMargins
 from openpyxl.utils import get_column_letter
 import streamlit.components.v1 as components
 
-# --- ระบบเชื่อมต่อ Google Sheets (อัปเดตใหม่ใช้ google-auth) ---
+# --- ระบบเชื่อมต่อ Google Sheets ---
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -48,7 +48,6 @@ def get_header_color(t_idx, day_of_week):
         if t_idx in [14, 15]: return 'blue'              
     return None
 
-# สีดั้งเดิม 100%
 header_color_map = {
     'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
     'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
@@ -59,7 +58,7 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database)
+# 📊 ส่วนเชื่อมต่อ Google Sheets (Database & Template)
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
@@ -120,14 +119,106 @@ def load_from_db(date_str):
             raw_json = setting_sheet.cell(2, 1).value
             if raw_json:
                 settings_result = json.loads(raw_json)
-        except: 
-            pass 
+        except: pass 
             
         return df_result, settings_result, "Success"
     except gspread.exceptions.WorksheetNotFound:
         return None, None, f"ไม่พบข้อมูลตารางของวันที่ {date_str} ในฐานข้อมูล"
     except Exception as e:
         return None, None, f"โหลดข้อมูลล้มเหลว: {str(e)}"
+
+# --- ฟังก์ชันจัดการ Template ---
+def get_available_templates():
+    sheet_file, _ = connect_to_gsheet()
+    if not sheet_file: return []
+    try:
+        worksheets = sheet_file.worksheets()
+        return sorted([ws.title.replace("TPL_", "") for ws in worksheets if ws.title.startswith("TPL_")])
+    except: return []
+
+def save_template(template_name, settings_data):
+    sheet_file, msg = connect_to_gsheet()
+    if not sheet_file: return False, msg
+    sheet_name = f"TPL_{template_name}"
+    try:
+        try:
+            worksheet = sheet_file.worksheet(sheet_name)
+            sheet_file.del_worksheet(worksheet)
+        except: pass
+        worksheet = sheet_file.add_worksheet(title=sheet_name, rows="10", cols="2")
+        worksheet.update([["Data JSON"], [json.dumps(settings_data, ensure_ascii=False)]])
+        return True, f"บันทึกเทมเพลต '{template_name}' สำเร็จ!"
+    except Exception as e:
+        return False, f"บันทึกล้มเหลว: {str(e)}"
+
+def load_template(template_name):
+    sheet_file, msg = connect_to_gsheet()
+    if not sheet_file: return None, msg
+    sheet_name = f"TPL_{template_name}"
+    try:
+        worksheet = sheet_file.worksheet(sheet_name)
+        raw_json = worksheet.cell(2, 1).value
+        if raw_json: return json.loads(raw_json), "Success"
+        return None, "Template ว่างเปล่า"
+    except Exception as e:
+        return None, f"โหลดล้มเหลว: {str(e)}"
+
+def inject_settings_to_session(s_data, break_choices):
+    # รีเซ็ตค่าทั้งหมดก่อน
+    for i in range(5):
+        st.session_state[f"l_name_{i}"] = "ไม่มี"
+        st.session_state[f"l_type_{i}"] = "ทั้งวัน"
+        st.session_state[f"pt_n_{i}"] = ""
+        st.session_state[f"pt_s_{i}"] = "08.30"
+        st.session_state[f"pt_e_{i}"] = "16.30"
+        st.session_state[f"pt_b_{i}"] = True
+    for i in range(20):
+        st.session_state[f"b_name_{i}"] = "ไม่มี"
+        st.session_state[f"b_time_{i}"] = break_choices[0]
+    for i in range(30):
+        st.session_state[f"t_name_{i}"] = "ไม่มี"
+        st.session_state[f"t_n_{i}"] = ""
+        st.session_state[f"t_s_{i}"] = "08.30"
+        st.session_state[f"t_e_{i}"] = "09.30"
+        st.session_state[f"m_name_{i}"] = "ไม่มี"
+        st.session_state[f"m_task_{i}"] = "เลือกภาระงาน"
+        st.session_state[f"m_s_{i}"] = "08.30"
+        st.session_state[f"m_e_{i}"] = "09.30"
+    for i in range(3):
+        st.session_state[f"sick_{i}"] = "ไม่มี"
+
+    if not s_data: return
+
+    # เติมค่าใหม่เข้าไป
+    for i, item in enumerate(s_data.get("leaves", [])):
+        if i < 5:
+            st.session_state[f"l_name_{i}"] = item["name"]
+            st.session_state[f"l_type_{i}"] = item["type"]
+    for i, item in enumerate(s_data.get("pt", [])):
+        if i < 5:
+            st.session_state[f"pt_n_{i}"] = item["name"]
+            st.session_state[f"pt_s_{i}"] = item["start"]
+            st.session_state[f"pt_e_{i}"] = item["end"]
+            st.session_state[f"pt_b_{i}"] = item.get("has_break", True)
+    for i, item in enumerate(s_data.get("tasks", [])):
+        if i < 30:
+            st.session_state[f"t_name_{i}"] = item["name"]
+            st.session_state[f"t_n_{i}"] = item["task"]
+            st.session_state[f"t_s_{i}"] = item["start"]
+            st.session_state[f"t_e_{i}"] = item["end"]
+    for i, item in enumerate(s_data.get("fixed", [])):
+        if i < 30:
+            st.session_state[f"m_name_{i}"] = item["name"]
+            st.session_state[f"m_task_{i}"] = item["task"]
+            st.session_state[f"m_s_{i}"] = item["start"]
+            st.session_state[f"m_e_{i}"] = item["end"]
+    for i, item in enumerate(s_data.get("sick", [])):
+        if i < 3:
+            st.session_state[f"sick_{i}"] = item["name"]
+    for i, item in enumerate(s_data.get("breaks", [])):
+        if i < 20:
+            st.session_state[f"b_name_{i}"] = item["name"]
+            st.session_state[f"b_time_{i}"] = item["break"]
 
 # ==========================================
 # 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
@@ -408,7 +499,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
         model.Add(done_disp_7 + done_disp_8 <= 1)
 
-        # จำกัด Match+C ไม่เกิน 1 ชั่วโมง (2 สล็อต) ต่อคนต่อวัน 
         model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 2)
 
     model.Add(sum(is_disp_7_vars) <= 2) 
@@ -551,20 +641,20 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     else: return None, "Infeasible", "จำนวนคนไม่เพียงพอต่อการจัดตาราง หรือเงื่อนไขตึงเกินไปครับ"
 
 # ==========================================
-# 🎨 ฟังก์ชันใส่สีพื้นหลังเว็บ
+# 🎨 ฟังก์ชันใส่สีพื้นหลังเว็บ (สีดั้งเดิม 100%)
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base_style = "text-align: center; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; color: black; font-weight: bold;' 
-    elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4; color: black;' 
-    elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC; color: black;' 
-    elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: #FF0000; font-weight: bold;' 
-    elif 'Ver PS' in val_str: return base_style + 'background-color: #E1D5E7; color: black;' 
-    elif 'Ver' in val_str: return base_style + 'background-color: #FFE6CC; color: black;' 
-    elif val_str == 'พัก': return base_style + 'background-color: #F8CECC; color: black;' 
-    elif val_str in ['-', 'ว่าง']: return base_style + 'background-color: #F5F5F5; color: black;' 
-    else: return base_style + 'background-color: #E6E6E6; color: black;' 
+    base_style = "text-align: center; color: black; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; font-weight: bold;' 
+    elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4;' 
+    elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC;' 
+    elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: red; font-weight: bold;' 
+    elif 'Ver PS' in val_str: return base_style + 'background-color: #E1D5E7;' 
+    elif 'Ver' in val_str: return base_style + 'background-color: #FFE6CC;' 
+    elif val_str == 'พัก': return base_style + 'background-color: #F8CECC;' 
+    elif val_str in ['-', 'ว่าง']: return base_style + 'background-color: #F5F5F5; color: #808080;' 
+    else: return base_style + 'background-color: #E6E6E6;' 
 
 # ==========================================
 # 📸 ฟังก์ชันสร้าง HTML Table สำหรับโหลด PNG
@@ -577,11 +667,11 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
         elif 'จ่าย ' in val_str: bg = "#D5E8D4"
         elif val_str == 'Matching': bg = "#DAE8FC"
-        elif 'Match' in val_str: bg, color, weight = "#DAE8FC", "#FF0000", "bold"
+        elif 'Match' in val_str: bg, color, weight = "#DAE8FC", "red", "bold"
         elif 'Ver PS' in val_str: bg = "#E1D5E7"
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
-        elif val_str in ['-', 'ว่าง']: bg = "#F5F5F5" 
+        elif val_str in ['-', 'ว่าง']: bg, color = "#F5F5F5", "#808080"
         return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
@@ -601,17 +691,18 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
 
     cols = df.columns.tolist()
     num_cols = len(cols)
-    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px;'>ประจำ{thai_date_str}</td></tr><tr>"
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px; color: black;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px; color: black;'>ประจำ{thai_date_str}</td></tr><tr>"
     for i, col in enumerate(cols):
         bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
-        html += f"<th style='background-color: {bg}; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
+        html += f"<th style='background-color: {bg}; color: black; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
     html += "</tr>"
     for _, row in df.iterrows():
         html += "<tr style='height: 50px;'>"
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
-            if i == 0 or _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
+            if i == 0: style = "background-color: #FFFFFF; color: black; font-weight: bold; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px;"
+            if _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
             html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
     html += "</table></div>"
@@ -625,7 +716,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 134 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 135 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -663,66 +754,30 @@ with st.sidebar:
         data, s_data, msg = load_from_db(date_str)
         if data is not None and not data.empty:
             st.session_state.ref_df = data.set_index('ชื่อ/เวลา')
-            
-            if s_data:
-                for i in range(5):
-                    st.session_state[f"l_name_{i}"] = "ไม่มี"
-                    st.session_state[f"l_type_{i}"] = "ทั้งวัน"
-                    st.session_state[f"pt_n_{i}"] = ""
-                    st.session_state[f"pt_s_{i}"] = "08.30"
-                    st.session_state[f"pt_e_{i}"] = "16.30"
-                    st.session_state[f"pt_b_{i}"] = True
-                
-                for i in range(20):
-                    st.session_state[f"b_name_{i}"] = "ไม่มี"
-                    st.session_state[f"b_time_{i}"] = break_choices[0]
-                    
-                for i in range(30):
-                    st.session_state[f"t_name_{i}"] = "ไม่มี"
-                    st.session_state[f"t_n_{i}"] = ""
-                    st.session_state[f"t_s_{i}"] = "08.30"
-                    st.session_state[f"t_e_{i}"] = "09.30"
-                    st.session_state[f"m_name_{i}"] = "ไม่มี"
-                    st.session_state[f"m_task_{i}"] = "เลือกภาระงาน"
-                    st.session_state[f"m_s_{i}"] = "08.30"
-                    st.session_state[f"m_e_{i}"] = "09.30"
-                for i in range(3):
-                    st.session_state[f"sick_{i}"] = "ไม่มี"
-
-                for i, item in enumerate(s_data.get("leaves", [])):
-                    if i < 5:
-                        st.session_state[f"l_name_{i}"] = item["name"]
-                        st.session_state[f"l_type_{i}"] = item["type"]
-                for i, item in enumerate(s_data.get("pt", [])):
-                    if i < 5:
-                        st.session_state[f"pt_n_{i}"] = item["name"]
-                        st.session_state[f"pt_s_{i}"] = item["start"]
-                        st.session_state[f"pt_e_{i}"] = item["end"]
-                        st.session_state[f"pt_b_{i}"] = item.get("has_break", True)
-                for i, item in enumerate(s_data.get("tasks", [])):
-                    if i < 30:
-                        st.session_state[f"t_name_{i}"] = item["name"]
-                        st.session_state[f"t_n_{i}"] = item["task"]
-                        st.session_state[f"t_s_{i}"] = item["start"]
-                        st.session_state[f"t_e_{i}"] = item["end"]
-                for i, item in enumerate(s_data.get("fixed", [])):
-                    if i < 30:
-                        st.session_state[f"m_name_{i}"] = item["name"]
-                        st.session_state[f"m_task_{i}"] = item["task"]
-                        st.session_state[f"m_s_{i}"] = item["start"]
-                        st.session_state[f"m_e_{i}"] = item["end"]
-                for i, item in enumerate(s_data.get("sick", [])):
-                    if i < 3:
-                        st.session_state[f"sick_{i}"] = item["name"]
-                for i, item in enumerate(s_data.get("breaks", [])):
-                    if i < 20:
-                        st.session_state[f"b_name_{i}"] = item["name"]
-                        st.session_state[f"b_time_{i}"] = item["break"]
-                        
+            if s_data: inject_settings_to_session(s_data, break_choices)
             st.success("✅ ดึงตารางเดิมและเงื่อนไขทั้งหมดสำเร็จ!")
             st.rerun() 
         else: 
             st.error(f"❌ {msg}")
+            
+    # --- ส่วนโหลดเทมเพลต (ใหม่) ---
+    st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>📂 โหลดเทมเพลตตั้งค่า</p>", unsafe_allow_html=True)
+    available_templates = get_available_templates()
+    c_tpl1, c_tpl2 = st.columns([3, 2])
+    with c_tpl1:
+        sel_tpl = st.selectbox("เลือกเทมเพลต", ["(เลือกเทมเพลต)"] + available_templates, label_visibility="collapsed")
+    with c_tpl2:
+        if st.button("📥 โหลด", use_container_width=True):
+            if sel_tpl != "(เลือกเทมเพลต)":
+                s_data, msg = load_template(sel_tpl)
+                if s_data:
+                    inject_settings_to_session(s_data, break_choices)
+                    st.success(f"✅ โหลดเทมเพลต '{sel_tpl}' สำเร็จ!")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {msg}")
+            else:
+                st.warning("กรุณาเลือกเทมเพลต")
                 
     st.divider()
     
@@ -815,6 +870,20 @@ with st.sidebar:
         "sick": [{"name": p} for p in sick_people_input],
         "breaks": [{"name": p, "break": break_choices[b]} for p, b in fix_breaks_input.items()]
     }
+
+    # --- ส่วนเซฟเทมเพลต (ใหม่) ---
+    st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>💾 บันทึกเป็นเทมเพลตตั้งค่า</p>", unsafe_allow_html=True)
+    c_s_tpl1, c_s_tpl2 = st.columns([3, 2])
+    with c_s_tpl1:
+        new_tpl_name = st.text_input("ชื่อเทมเพลต", placeholder="เช่น วันจันทร์ เวร ก.", label_visibility="collapsed")
+    with c_s_tpl2:
+        if st.button("💾 บันทึก", use_container_width=True):
+            if new_tpl_name.strip():
+                success, msg = save_template(new_tpl_name.strip(), current_settings)
+                if success: st.success(msg)
+                else: st.error(msg)
+            else:
+                st.warning("กรุณาตั้งชื่อเทมเพลต")
 
 if st.button("🚀 เริ่มจัดตาราง / ซ่อมตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
     with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
