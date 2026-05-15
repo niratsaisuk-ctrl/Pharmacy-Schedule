@@ -336,20 +336,11 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
         elif is_group_f:
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 7)
-            
-            # บังคับช่องสำหรับกลุ่ม F ตามเงื่อนไข
-            # 10.00 - 11.00 (t=3, 4) จ่ายยา
             model.Add(sum(x[p, 3, task] for task in my_dispense_allowed) == 1)
             model.Add(sum(x[p, 4, task] for task in my_dispense_allowed) == 1)
-            
-            # 11.00 - 12.00 (t=5, 6) Matching
             model.Add(x[p, 5, 'Matching'] == 1)
             model.Add(x[p, 6, 'Matching'] == 1)
-            
-            # 12.00 - 12.30 (t=7) จ่ายยา
             model.Add(sum(x[p, 7, task] for task in my_dispense_allowed) == 1)
-            
-            # บ่าย 4 สล็อต (t=9 ถึง 15) จ่ายยา
             model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
 
         if len(PART_TIME) <= 2:
@@ -518,6 +509,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model.Add(sum(is_disp_7_vars) <= 2) 
 
+    # 🌟 V139 FIX: บังคับให้ AI พยายามจัดเบรกจากการจ่ายยา 1 ชม. สำหรับทุกคน แต่ลดโทษให้ PT 🌟
     for p in all_pharmacists:
         for t in range(14):
             is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
@@ -529,7 +521,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             
             short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
             model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
-            reward_vars.append(short_break * -2000000) 
+            
+            if p in ft_pharmacists:
+                # FT โดนหักหนักมาก จะได้ไม่โดนจัดพัก 30 นาทีเลย
+                reward_vars.append(short_break * -2000000) 
+            else:
+                # PT โดนหักระดับกลาง (เพื่อให้ AI จัดพัก 1 ชม. เป็นหลัก แต่ถ้ายัดไม่ลงจริงๆ ก็ยอมให้พัก 30 นาทีได้โดยไม่รัน Error)
+                reward_vars.append(short_break * -500000)
 
     tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
     for p in all_pharmacists:
@@ -731,7 +729,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 137 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 139 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
