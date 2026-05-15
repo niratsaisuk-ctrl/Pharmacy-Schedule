@@ -127,7 +127,6 @@ def load_from_db(date_str):
     except Exception as e:
         return None, None, f"โหลดข้อมูลล้มเหลว: {str(e)}"
 
-# --- ฟังก์ชันจัดการ Template ---
 def get_available_templates():
     sheet_file, _ = connect_to_gsheet()
     if not sheet_file: return []
@@ -164,7 +163,6 @@ def load_template(template_name):
         return None, f"โหลดล้มเหลว: {str(e)}"
 
 def inject_settings_to_session(s_data, break_choices):
-    # รีเซ็ตค่าทั้งหมดก่อน
     for i in range(5):
         st.session_state[f"l_name_{i}"] = "ไม่มี"
         st.session_state[f"l_type_{i}"] = "ทั้งวัน"
@@ -189,7 +187,6 @@ def inject_settings_to_session(s_data, break_choices):
 
     if not s_data: return
 
-    # เติมค่าใหม่เข้าไป
     for i, item in enumerate(s_data.get("leaves", [])):
         if i < 5:
             st.session_state[f"l_name_{i}"] = item["name"]
@@ -319,6 +316,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         is_group_c = (pt['start'] in ["13.00", "13.30"] and pt['end'] in ["16.00", "16.30"])
         is_group_d = (pt['start'] == "09.30" and pt['end'] in ["13.00", "13.30"])
         is_group_e = (pt['start'] == "09.00" and pt['end'] == "14.30")
+        # 🌟 V136: เพิ่มกลุ่ม F
+        is_group_f = (pt['start'] == "10.00" and pt['end'] in ["16.00", "16.30"])
 
         if pt['has_break'] and not (is_group_c or is_group_d or is_group_e):
             if s_idx <= 8 and e_idx > 8:
@@ -336,6 +335,11 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 4)
         elif is_group_e: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
+        # 🌟 V136 Logic สำหรับกลุ่ม F: จ่ายยาวันละ 3.5 ชม (7 สล็อต) เช้า 1.5 ชม (3 สล็อต) บ่าย 2 ชม (4 สล็อต)
+        elif is_group_f:
+            model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 7)
+            model.Add(sum(x[p, t, task] for t in range(0, 8) for task in my_dispense_allowed) == 3)
+            model.Add(sum(x[p, t, task] for t in range(9, 16) for task in my_dispense_allowed) == 4)
 
         if len(PART_TIME) <= 2:
             for t in range(max(s_idx, e_idx - 2), e_idx):
@@ -657,7 +661,7 @@ def get_color_style(val):
     else: return base_style + 'background-color: #E6E6E6;' 
 
 # ==========================================
-# 📸 ฟังก์ชันสร้าง HTML Table สำหรับโหลด PNG
+# 📸 ฟังก์ชันสร้าง HTML Table สำหรับโหลด PNG (สีดั้งเดิม 100%)
 # ==========================================
 def build_html_table(df, selected_date, DAY_OF_WEEK):
     thai_date_str = get_thai_date(selected_date)
@@ -716,7 +720,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 135 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -760,7 +764,6 @@ with st.sidebar:
         else: 
             st.error(f"❌ {msg}")
             
-    # --- ส่วนโหลดเทมเพลต (ใหม่) ---
     st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>📂 โหลดเทมเพลตตั้งค่า</p>", unsafe_allow_html=True)
     available_templates = get_available_templates()
     c_tpl1, c_tpl2 = st.columns([3, 2])
@@ -826,7 +829,7 @@ with st.sidebar:
     st.subheader("📌 ล็อกภาระงานหลัก")
     with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
         opts = ['จ่าย 4', 'จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'จ่าย 11', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver 4', 'Ver 5', 'Ver 6', 'Ver 7', 'Ver 8', 'Ver 9', 'Ver 10', 'Ver PS1', 'Ver PS2', 'Ver PS3', 'Ver PS4', 'Ver PS5', 'Ver PS6', 'Ver PS7', 'Ver PS8', 'Ver PS9', 'Ver PS10', 'Match + C', 'Match + C2', 'Matching']
-        maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver 5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
+        maps = {'จ่าย 4': 'จ่ายยา_4', 'จ่าย 5': 'จ่ายยา_5', 'จ่าย 6': 'จ่ายยา_6', 'จ่าย 7': 'จ่ายยา_7', 'จ่าย 8': 'จ่ายยา_8', 'จ่าย 9': 'จ่ายยา_9', 'จ่าย 10': 'จ่ายยา_10', 'จ่าย 11': 'จ่ายยา_11', 'Ver 1 INC': 'Ver_1', 'Ver 2/ปณ.': 'Ver_2', 'Ver 3/A': 'Ver_3', 'Ver 4': 'Ver_4', 'Ver 5': 'Ver_5', 'Ver 6': 'Ver_6', 'Ver 7': 'Ver 7', 'Ver 8': 'Ver_8', 'Ver 9': 'Ver_9', 'Ver 10': 'Ver_10', 'Ver PS1': 'PS_1', 'Ver PS2': 'PS_2', 'Ver PS3': 'PS_3', 'Ver PS4': 'PS_4', 'Ver PS5': 'PS_5', 'Ver PS6': 'PS_6', 'Ver PS7': 'PS_7', 'Ver PS8': 'PS_8', 'Ver PS9': 'PS_9', 'Ver PS10': 'PS_10', 'Match + C': 'Match_C', 'Match + C2': 'Match_C2', 'Matching': 'Matching'}
         for i in range(30):
             st.markdown(f"**ล็อกรายการที่ {i+1}**")
             p_m_task = st.selectbox("ชื่อคน", dropdown_names, key=f"m_name_{i}", label_visibility="collapsed")
@@ -871,13 +874,12 @@ with st.sidebar:
         "breaks": [{"name": p, "break": break_choices[b]} for p, b in fix_breaks_input.items()]
     }
 
-    # --- ส่วนเซฟเทมเพลต (ใหม่) ---
     st.markdown("<p style='font-size: 13px; color: gray; margin-bottom: 5px; margin-top: 10px;'>💾 บันทึกเป็นเทมเพลตตั้งค่า</p>", unsafe_allow_html=True)
     c_s_tpl1, c_s_tpl2 = st.columns([3, 2])
     with c_s_tpl1:
-        new_tpl_name = st.text_input("ชื่อเทมเพลต", placeholder="เช่น วันจันทร์ เวร ก.", label_visibility="collapsed")
+        new_tpl_name = st.text_input("ชื่อเทมเพลต", placeholder="เช่น วันจันทร์ เวร ก.", key="tpl_save_name", label_visibility="collapsed")
     with c_s_tpl2:
-        if st.button("💾 บันทึก", use_container_width=True):
+        if st.button("💾 บันทึก", use_container_width=True, key="tpl_save_btn"):
             if new_tpl_name.strip():
                 success, msg = save_template(new_tpl_name.strip(), current_settings)
                 if success: st.success(msg)
