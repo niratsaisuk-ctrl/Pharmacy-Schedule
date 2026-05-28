@@ -58,7 +58,7 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database & Template)
+# 📊 ส่วนเชื่อมต่อ Google Sheets
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
@@ -218,7 +218,7 @@ def inject_settings_to_session(s_data, break_choices):
             st.session_state[f"b_time_{i}"] = item["break"]
 
 # ==========================================
-# 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
+# 🧠 ฟังก์ชันคำนวณตาราง (AI Logic + Conflict Check)
 # ==========================================
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
                "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
@@ -226,16 +226,59 @@ VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "1
 def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
-    model = cp_model.CpModel()
     
-    # 🌟 V136.7 & V136.8: อัปเดตรายชื่อและตั้งค่าหัวหน้าห้องยา
     ft_pharmacists = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
-    head_pharmacists = ['กอล์ฟ', 'มุก'] # Super Users
+    head_pharmacists = ['กอล์ฟ', 'มุก'] 
     
     pt_pharmacists = [pt['name'] for pt in PART_TIME]
     all_pharmacists = ft_pharmacists + pt_pharmacists
-    
     time_slots = [f"{VALID_TIMES[i]}-{VALID_TIMES[i+1]}" for i in range(16)]
+
+    # ------------------------------------------------------------------
+    # 🚨 PRE-FLIGHT CONFLICT CHECKER: ตรวจจับการกรอกข้อมูลทับซ้อน
+    # ------------------------------------------------------------------
+    error_msgs = []
+    
+    # 1. เช็กลา
+    leave_slots_check = {}
+    for p in ft_pharmacists:
+        if p in LEAVES:
+            l_type = LEAVES[p]
+            l_range = range(0,16) if l_type == 'ทั้งวัน' else (range(0,9) if l_type == 'เช้า' else range(7,16))
+            for t in l_range: 
+                leave_slots_check[(p, t)] = l_type
+
+    # 2. เช็กงานเฉพาะ (และดูว่าทับซ้อนกับลา หรือทับกันเองไหม)
+    custom_slots_check = {}
+    for (p, start, end), t_name in CUSTOM_TASKS.items():
+        s_idx, e_idx = time_to_slot(start), time_to_slot(end)
+        for t in range(s_idx, e_idx):
+            if (p, t) in leave_slots_check:
+                error_msgs.append(f"⚠️ **{p}**: ถูกตั้งให้ **ลา** และทำภารกิจ **{t_name}** ทับซ้อนกันเวลา {time_slots[t]}")
+            if (p, t) in custom_slots_check:
+                error_msgs.append(f"⚠️ **{p}**: ถูกตั้งภารกิจ **{custom_slots_check[(p, t)]}** และ **{t_name}** ทับซ้อนกันเวลา {time_slots[t]}")
+            custom_slots_check[(p, t)] = t_name
+
+    # 3. เช็กล็อกงานหลัก (และดูว่าทับซ้อนกับลา หรืองานเฉพาะไหม)
+    fixed_slots_check = {}
+    for (p, start, end), t_name in FIXED_MAIN_TASKS.items():
+        s_idx, e_idx = time_to_slot(start), time_to_slot(end)
+        for t in range(s_idx, e_idx):
+            if (p, t) in leave_slots_check:
+                error_msgs.append(f"⚠️ **{p}**: ถูกตั้งให้ **ลา** และล็อกงานหลัก **{t_name}** ทับซ้อนกันเวลา {time_slots[t]}")
+            if (p, t) in custom_slots_check:
+                error_msgs.append(f"⚠️ **{p}**: มีภารกิจ **{custom_slots_check[(p, t)]}** และล็อกงานหลัก **{t_name}** ทับซ้อนกันเวลา {time_slots[t]}")
+            if (p, t) in fixed_slots_check:
+                error_msgs.append(f"⚠️ **{p}**: ถูกล็อกงานหลัก **{fixed_slots_check[(p, t)]}** และ **{t_name}** ทับซ้อนกันเวลา {time_slots[t]}")
+            fixed_slots_check[(p, t)] = t_name
+
+    if error_msgs:
+        unique_errors = list(dict.fromkeys(error_msgs))
+        return None, "Validation Failed", "ตรวจพบการตั้งเงื่อนไขทับซ้อนกัน กรุณาแก้ไข:\n\n" + "\n".join(unique_errors)
+    # ------------------------------------------------------------------
+
+    # --- เข้าสู่ระบบคำนวณ AI ---
+    model = cp_model.CpModel()
     
     dispensing_tasks = ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'จ่ายยา_11']
     ver_cpoe_tasks = ['Ver_1', 'Ver_2', 'Ver_3', 'Ver_4', 'Ver_5', 'Ver_6', 'Ver_7', 'Ver_8', 'Ver_9', 'Ver_10']
@@ -294,7 +337,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         s_idx, e_idx = time_to_slot(start), time_to_slot(end)
         for t in range(s_idx, e_idx): model.Add(x[p, t, task_name] == 1)
 
-    # 🌟 V136.8: ปิด Auto-Assist ของหัวหน้าห้องยา บังคับทำ Matching ตลอดวัน เว้นแต่จะถูกล็อกผ่านหน้าเว็บ
     for p in head_pharmacists:
         fixed_slots = set()
         for (fp, s, e), t_name in FIXED_MAIN_TASKS.items():
@@ -304,7 +346,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
         for t in range(16):
             if t not in fixed_slots:
-                # ถ้าไม่ได้ถูกล็อกงานหลักจากหน้าเว็บ ให้ห้ามทำงานหลักโดยเด็ดขาด (บังคับเป็น Matching หรือ พัก หรือ ลา หรือ งานเฉพาะเท่านั้น)
                 for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
                     model.Add(x[p, t, task] == 0)
 
@@ -388,10 +429,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for p in all_pharmacists:
         if p in ft_pharmacists:
             model.Add(sum(x[p, t, 'นอกเวลา'] for t in range(16)) == 0) 
-            
             if p not in head_pharmacists:
                 for t in range(16): model.Add(x[p, t, 'Matching'] == 0) 
-            # (V136.8: หัวหน้าทำ Matching ได้ โดยไม่ต้องใช้โบนัสมาล่อแล้ว เพราะบังคับด้วย Hard Constraint ด้านบน)
         
         if p in full_day_active_ft:
             model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 2)
@@ -422,7 +461,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        # ใช้ฐานความยืดหยุ่นของ V136.5 ตามคำขอของ User (8.30-9.30 ปล่อยช่อง 9 ว่างได้ถ้าคนไม่พอ)
         if t < 2: 
             req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
             reward_vars.append(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) * 50000)
@@ -488,7 +526,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(14):
             model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
 
-    # 🌟 V136.8: ปลดล็อกข้อจำกัดของหัวหน้าห้องยา
     is_disp_7_vars = []
     for p in ft_pharmacists:
         if p not in head_pharmacists:
@@ -756,9 +793,8 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.8 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.9 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
-# 🌟 V136.8: อัปเดตรายชื่อหน้า UI
 ft_pharmacists_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
 
@@ -925,7 +961,7 @@ with st.sidebar:
                 st.warning("กรุณาตั้งชื่อเทมเพลต")
 
 if st.button("🚀 เริ่มจัดตาราง / ซ่อมตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
-    with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
+    with st.spinner("กำลังตรวจสอบและจัดตารางปฏิบัติงาน... (ใช้เวลาประมาณ 10-30 วินาที)"):
         try:
             df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input, IS_MWF, st.session_state.ref_df)
             if status == "Success":
