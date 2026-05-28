@@ -58,7 +58,7 @@ header_color_map = {
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ==========================================
-# 📊 ส่วนเชื่อมต่อ Google Sheets (Database & Template)
+# 📊 ส่วนเชื่อมต่อ Google Sheets
 # ==========================================
 def connect_to_gsheet():
     if not SHEETS_AVAILABLE:
@@ -218,7 +218,7 @@ def inject_settings_to_session(s_data, break_choices):
             st.session_state[f"b_time_{i}"] = item["break"]
 
 # ==========================================
-# 🧠 ฟังก์ชันคำนวณตาราง (AI Logic)
+# 🧠 ฟังก์ชันคำนวณตาราง (AI Logic & Pre-flight)
 # ==========================================
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00",
                "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
@@ -226,12 +226,74 @@ VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "1
 def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
-    model = cp_model.CpModel()
-    
     ft_pharmacists = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 
                       'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
     pt_pharmacists = [pt['name'] for pt in PART_TIME]
     all_pharmacists = ft_pharmacists + pt_pharmacists
+    
+    # ------------------------------------------------------------------
+    # 🚦 PRE-FLIGHT CHECKER: ระบบสแกนหาข้อขัดแย้งก่อนให้ AI ทำงาน
+    # ------------------------------------------------------------------
+    error_msgs = []
+    
+    chk_leave = set()
+    for p in ft_pharmacists:
+        if p in LEAVES:
+            l_type = LEAVES[p]
+            l_range = range(0,16) if l_type == 'ทั้งวัน' else (range(0,9) if l_type == 'เช้า' else range(7,16))
+            for t in l_range: chk_leave.add((p, t))
+            
+    chk_custom = set()
+    for (p, start, end), t_name in CUSTOM_TASKS.items():
+        s_idx, e_idx = time_to_slot(start), time_to_slot(end)
+        for t in range(s_idx, e_idx):
+            if (p, t) in chk_leave:
+                error_msgs.append(f"⚠️ {p}: ถูกตั้งให้ 'ลา' และทำ '{t_name}' ในช่วง {VALID_TIMES[t]} พร้อมกัน")
+            chk_custom.add((p, t))
+            
+    chk_fixed = set()
+    for (p, start, end), t_name in FIXED_MAIN_TASKS.items():
+        s_idx, e_idx = time_to_slot(start), time_to_slot(end)
+        for t in range(s_idx, e_idx):
+            if (p, t) in chk_leave:
+                error_msgs.append(f"⚠️ {p}: ถูกตั้งให้ 'ลา' และล็อกงาน '{t_name}' ในช่วง {VALID_TIMES[t]} พร้อมกัน")
+            if (p, t) in chk_custom:
+                error_msgs.append(f"⚠️ {p}: ถูกตั้งงานพิเศษ และล็อกงาน '{t_name}' ในช่วง {VALID_TIMES[t]} พร้อมกัน")
+            chk_fixed.add((p, t))
+            
+    # เช็ก Manpower คอขวดรายสล็อต
+    for t in range(16):
+        # คำนวณความต้องการคนขั้นต่ำในแต่ละสล็อต
+        if t < 2: req_count = 8 # จ่าย 6,7,8 + Ver1,2,3 + PS1 + Match_C
+        elif t == 2: req_count = 10
+        else: req_count = 11
+        
+        available_people = 0
+        for p in all_pharmacists:
+            is_working = False
+            if p in ft_pharmacists:
+                is_working = True
+            else:
+                for pt in PART_TIME:
+                    if pt['name'] == p and (time_to_slot(pt['start']) <= t < time_to_slot(pt['end'])):
+                        is_working = True
+                        break
+            
+            if is_working:
+                if (p, t) not in chk_leave and (p, t) not in chk_custom:
+                    available_people += 1
+                    
+        if available_people < req_count:
+            t_str = f"{VALID_TIMES[t]}-{VALID_TIMES[t+1]}"
+            error_msgs.append(f"🚨 เวลา {t_str}: คนไม่พอ! (ต้องการ {req_count} คน แต่มีคนว่างแค่ {available_people} คน)")
+
+    if error_msgs:
+        unique_errors = list(dict.fromkeys(error_msgs))
+        return None, "Validation Failed", "ตรวจพบปัญหาในการตั้งค่า กรุณาแก้ไขดังนี้:\n\n" + "\n".join(unique_errors[:7])
+    # ------------------------------------------------------------------
+
+    # --- เริ่มคำนวณ AI (อิง 136.1) ---
+    model = cp_model.CpModel()
     
     time_slots = [f"{VALID_TIMES[i]}-{VALID_TIMES[i+1]}" for i in range(16)]
     
@@ -402,11 +464,11 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        # 🌟 V136.5: แก้ไขเงื่อนไขช่วง 08.30-09.30 (t < 2) ตามที่ User ร้องขอ
+        # 🌟 V136.6: ใช้ฐาน 136.1 + ลดช่องจ่ายยาช่วงเช้าให้ยืดหยุ่นได้
         if t < 2: 
-            # บังคับจ่ายยาแค่ 6, 7, 8 และ Ver/Match พื้นฐาน
+            # บังคับเฉพาะจ่ายยา 6, 7, 8 และ Ver/Match
             req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-            # ให้คะแนนล่อใจสำหรับช่อง 9 ถ้ามีคนเหลือให้ใส่ แต่ถ้าไม่มีก็ปล่อยว่างได้
+            # ถ้ามีคนเหลือให้ใส่ช่อง 9 ได้ (ให้คะแนนเป็นรางวัล) ถ้าไม่มีคนก็ไม่พัง
             reward_vars.append(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) * 50000)
             model.Add(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) <= 1)
         elif t == 2: 
@@ -655,8 +717,10 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             summary_row[time_col] = f"{w_count}/{x_count}/{yz_str}"
         df_result = pd.concat([df_result, pd.DataFrame([summary_row])], ignore_index=True)
         return df_result, "Success", ""
-    elif status == cp_model.UNKNOWN: return None, "Timeout", "ระบบคิดไม่ทัน กรุณาลดการล็อกงานหลัก หรือจำนวนคนลาลงครับ"
-    else: return None, "Infeasible", "จำนวนคนไม่เพียงพอต่อการจัดตาราง หรือเงื่อนไขตึงเกินไปครับ"
+    elif status == cp_model.UNKNOWN: 
+        return None, "Timeout", "ตารางตึงเกินไปในระดับเงื่อนไขย่อย (เช่น กฎห้ามทำต่อเนื่อง) แนะนำให้ลดงานพิเศษลงอีกนิดครับ"
+    else: 
+        return None, "Infeasible", "จำนวนคนไม่เพียงพอต่อการจัดตาราง หรือเงื่อนไขตึงเกินไปครับ"
 
 # ==========================================
 # 🎨 ฟังก์ชันใส่สีพื้นหลังเว็บ (สีพาสเทลเดิม 100%)
@@ -734,7 +798,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.5 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.6 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
@@ -902,7 +966,7 @@ with st.sidebar:
                 st.warning("กรุณาตั้งชื่อเทมเพลต")
 
 if st.button("🚀 เริ่มจัดตาราง / ซ่อมตารางด้วย AI (คลิก)", type="primary", use_container_width=True):
-    with st.spinner("กำลังจัดตารางปฏิบัติงานของคุณ... (ใช้เวลาประมาณ 10-30 วินาที)"):
+    with st.spinner("กำลังตรวจสอบและจัดตารางปฏิบัติงาน... (ใช้เวลาประมาณ 10-30 วินาที)"):
         try:
             df_result, status, msg = generate_schedule(DAY_OF_WEEK, leaves_input, custom_tasks_input, pt_input_list, fix_breaks_input, fixed_main_tasks_input, sick_people_input, IS_MWF, st.session_state.ref_df)
             if status == "Success":
