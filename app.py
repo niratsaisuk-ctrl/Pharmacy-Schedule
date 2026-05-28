@@ -228,9 +228,9 @@ def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
     model = cp_model.CpModel()
     
-    # --- 🌟 V136.7: อัปเดตรายชื่อและตั้งค่าหัวหน้าห้องยา ---
+    # 🌟 V136.7 & V136.8: อัปเดตรายชื่อและตั้งค่าหัวหน้าห้องยา
     ft_pharmacists = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
-    head_pharmacists = ['กอล์ฟ', 'มุก'] # Super Users ที่ลอยตัวอยู่เหนือกฎ
+    head_pharmacists = ['กอล์ฟ', 'มุก'] # Super Users
     
     pt_pharmacists = [pt['name'] for pt in PART_TIME]
     all_pharmacists = ft_pharmacists + pt_pharmacists
@@ -293,6 +293,20 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for (p, start, end), task_name in FIXED_MAIN_TASKS.items():
         s_idx, e_idx = time_to_slot(start), time_to_slot(end)
         for t in range(s_idx, e_idx): model.Add(x[p, t, task_name] == 1)
+
+    # 🌟 V136.8: ปิด Auto-Assist ของหัวหน้าห้องยา บังคับทำ Matching ตลอดวัน เว้นแต่จะถูกล็อกผ่านหน้าเว็บ
+    for p in head_pharmacists:
+        fixed_slots = set()
+        for (fp, s, e), t_name in FIXED_MAIN_TASKS.items():
+            if fp == p:
+                for t in range(time_to_slot(s), time_to_slot(e)):
+                    fixed_slots.add(t)
+
+        for t in range(16):
+            if t not in fixed_slots:
+                # ถ้าไม่ได้ถูกล็อกงานหลักจากหน้าเว็บ ให้ห้ามทำงานหลักโดยเด็ดขาด (บังคับเป็น Matching หรือ พัก หรือ ลา หรือ งานเฉพาะเท่านั้น)
+                for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
+                    model.Add(x[p, t, task] == 0)
 
     reward_vars = []
 
@@ -371,17 +385,13 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     b_group_vars_ft = {0: [], 1: [], 2: []}
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
     
-    # 🌟 V136.7: กำหนดกฎพักและการทำ Matching ของ FT / Head
     for p in all_pharmacists:
         if p in ft_pharmacists:
             model.Add(sum(x[p, t, 'นอกเวลา'] for t in range(16)) == 0) 
             
             if p not in head_pharmacists:
                 for t in range(16): model.Add(x[p, t, 'Matching'] == 0) 
-            else:
-                # ให้คะแนนมหาศาล เพื่อให้หัวหน้าไปทำ Matching โดยปริยาย ยกเว้นโดนดึงไปช่วยงานหลัก
-                for t in range(16):
-                    reward_vars.append(x[p, t, 'Matching'] * 800000)
+            # (V136.8: หัวหน้าทำ Matching ได้ โดยไม่ต้องใช้โบนัสมาล่อแล้ว เพราะบังคับด้วย Hard Constraint ด้านบน)
         
         if p in full_day_active_ft:
             model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 2)
@@ -401,7 +411,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     total_active_ft_break = len(full_day_active_ft)
     if total_active_ft_break > 0:
-        # ขยายเพดานรองรับจำนวนคน FT ที่มากขึ้น
         max_b_per_group = (total_active_ft_break // 3) + 2
         for i in range(3):
             model.Add(sum(b_group_vars_ft[i]) <= max_b_per_group) 
@@ -479,10 +488,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(14):
             model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
 
-    # 🌟 V136.7: ปลดล็อกข้อจำกัดของหัวหน้าห้องยา
+    # 🌟 V136.8: ปลดล็อกข้อจำกัดของหัวหน้าห้องยา
     is_disp_7_vars = []
     for p in ft_pharmacists:
-        # สำหรับลูกน้อง FT ปกติที่ต้องรักษากฎความเครียด
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
             over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
@@ -748,9 +756,9 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.7 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.8 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
-# 🌟 V136.7: อัปเดตรายชื่อหน้า UI
+# 🌟 V136.8: อัปเดตรายชื่อหน้า UI
 ft_pharmacists_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
 
