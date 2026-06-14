@@ -170,17 +170,9 @@ def inject_settings_to_session(s_data, break_choices):
         st.session_state[f"pt_s_{i}"] = "08.30"
         st.session_state[f"pt_e_{i}"] = "16.30"
         st.session_state[f"pt_b_{i}"] = True
-        
-        st.session_state[f"moff_name_{i}"] = "ไม่มี"
-        st.session_state[f"moff_s_{i}"] = "08.30"
-        st.session_state[f"moff_e_{i}"] = "10.30"
-        
     for i in range(20):
         st.session_state[f"b_name_{i}"] = "ไม่มี"
         st.session_state[f"b_time_{i}"] = break_choices[0]
-        st.session_state[f"eoff_name_{i}"] = "ไม่มี"
-        st.session_state[f"eoff_time_{i}"] = "16.00 - 16.30"
-        
     for i in range(30):
         st.session_state[f"t_name_{i}"] = "ไม่มี"
         st.session_state[f"t_n_{i}"] = ""
@@ -190,7 +182,6 @@ def inject_settings_to_session(s_data, break_choices):
         st.session_state[f"m_task_{i}"] = "เลือกภาระงาน"
         st.session_state[f"m_s_{i}"] = "08.30"
         st.session_state[f"m_e_{i}"] = "09.30"
-        
     for i in range(3):
         st.session_state[f"sick_{i}"] = "ไม่มี"
 
@@ -206,18 +197,6 @@ def inject_settings_to_session(s_data, break_choices):
             st.session_state[f"pt_s_{i}"] = item["start"]
             st.session_state[f"pt_e_{i}"] = item["end"]
             st.session_state[f"pt_b_{i}"] = item.get("has_break", True)
-            
-    for i, item in enumerate(s_data.get("off_morning", [])):
-        if i < 5:
-            st.session_state[f"moff_name_{i}"] = item["name"]
-            st.session_state[f"moff_s_{i}"] = item["start"]
-            st.session_state[f"moff_e_{i}"] = item["end"]
-            
-    for i, item in enumerate(s_data.get("off_evening", [])):
-        if i < 20:
-            st.session_state[f"eoff_name_{i}"] = item["name"]
-            st.session_state[f"eoff_time_{i}"] = item["time"]
-            
     for i, item in enumerate(s_data.get("tasks", [])):
         if i < 30:
             st.session_state[f"t_name_{i}"] = item["name"]
@@ -496,21 +475,27 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         
         if p in full_day_active_ft:
             if p in head_pharmacists:
+                # 🌟 V136.12: Smart Head Break - บังคับพักเฉพาะช่วงเที่ยง-บ่ายต้นๆ ห้ามพักเย็น
                 break_sum = sum(x[p, t, 'พัก'] for t in range(16))
                 model.Add(break_sum <= 2)
                 reward_vars.append(break_sum * 100000) 
                 
+                # ห้ามพักช่วงเย็น (14:30 - 16:30) เด็ดขาด
                 for t in range(12, 16):
                     model.Add(x[p, t, 'พัก'] == 0)
+                    
+                # ห้ามพักช่วงเช้า (08:30 - 11:00) เด็ดขาด
                 for t in range(0, 5):
                     model.Add(x[p, t, 'พัก'] == 0)
                     
+                # ถ้าไม่ติดงานใดๆ ในช่วงเวลาพักปกติ (break_slots) ให้พยายามพักในรอบเหล่านั้น
                 head_is_busy = False
                 for t in break_slots:
                     if (p, t) in custom_slots_check or (p, t) in fixed_slots_check:
                         head_is_busy = True
                 
                 if not head_is_busy:
+                    # ถ้าว่างตอนเที่ยง ให้โบนัสพิเศษถ้าจัดให้พักตรงกับรอบปกติรอบใดรอบหนึ่ง
                     for bg_idx, bg_range in enumerate(b_groups):
                         is_in_this_break = model.NewBoolVar(f'head_{p}_in_break_{bg_idx}')
                         model.Add(sum(x[p, t, 'พัก'] for t in range(*bg_range)) == 2).OnlyEnforceIf(is_in_this_break)
@@ -614,6 +599,90 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
     for p in pt_pharmacists:
+        is_group_g = False
+        for pt_dict in PART_TIME:
+            if pt_dict['name'] == p and pt_dict['start'] == "10.00" and pt_dict['end'] in ["16.00", "16.30"] and pt_dict.get('has_break', True):
+                is_group_g = True
+        if not is_group_g: 
+            for t in range(14):
+                model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
+
+    is_disp_7_vars = []
+    for p in ft_pharmacists:
+        if p not in head_pharmacists:
+            tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
+            over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
+            model.Add(tot_disp <= 6 + over_3hr_var)
+            model.Add(tot_disp <= 7) 
+            reward_vars.append(over_3hr_var * -500000) 
+            is_disp_7_vars.append(over_3hr_var)
+            
+            if p in active_ft and p not in SICK_PEOPLE:
+                has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
+                is_half_day_leave = p in half_day_leaves
+                short_disp = model.NewIntVar(0, 16, f'short_disp_{p}')
+                if has_heavy_custom_tasks or is_half_day_leave: model.Add(short_disp >= 2 - tot_disp)
+                else: model.Add(short_disp >= 4 - tot_disp)
+                model.Add(short_disp >= 0)
+                reward_vars.append(short_disp * -500000) 
+
+                under_avg = model.NewIntVar(0, 16, f'under_avg_{p}')
+                model.Add(under_avg >= 5 - tot_disp)
+                model.Add(under_avg >= 0)
+                reward_vars.append(under_avg * -10000) 
+
+            for d in ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
+            for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_10', 'จ่ายยา_11']:
+                total_d = sum(x[p, t, d] for t in range(16))
+                over_d = model.NewIntVar(0, 16, f'over_{p}_{d}')
+                model.Add(over_d >= total_d - 2)
+                model.Add(over_d >= 0) 
+                reward_vars.append(over_d * -2500) 
+
+            model.Add(sum(x[p, t, 'Ver_2'] for t in range(16)) <= 4)
+            for v in ['Ver_1', 'Ver_3']: model.Add(sum(x[p, t, v] for t in range(16)) <= 2)
+
+            done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
+            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
+            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
+
+            done_disp_8 = model.NewBoolVar(f'done_disp_8_{p}')
+            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
+            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
+            model.Add(done_disp_7 + done_disp_8 <= 1)
+
+            model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 2)
+
+    model.Add(sum(is_disp_7_vars) <= 2) 
+
+    for p in all_pharmacists:
+        for t in range(14):
+            is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
+            is_disp_t1 = sum(x[p, t+1, d] for d in dispensing_tasks)
+            is_disp_t2 = sum(x[p, t+2, d] for d in dispensing_tasks)
+            too_long = model.NewBoolVar(f'too_long_disp_{p}_{t}')
+            model.Add(is_disp_t + is_disp_t1 + is_disp_t2 <= 2 + too_long)
+            reward_vars.append(too_long * -100000) 
+            
+            short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
+            model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
+            
+            if p in ft_pharmacists:
+                reward_vars.append(short_break * -2000000) 
+            else:
+                reward_vars.append(short_break * -500000)
+
+    tasks_to_pair = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']
+    for p in all_pharmacists:
+        for t in range(15):
+            for task in tasks_to_pair:
+                match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
+                model.AddImplication(match_var, x[p, t, task])
+                model.AddImplication(match_var, x[p, t+1, task])
+                if task in dispensing_tasks: reward_vars.append(match_var * 500000) 
+                else: reward_vars.append(match_var * 150000)
+
+    for pt in PART_TIME:
         is_group_g = False
         for pt_dict in PART_TIME:
             if pt_dict['name'] == p and pt_dict['start'] == "10.00" and pt_dict['end'] in ["16.00", "16.30"] and pt_dict.get('has_break', True):
@@ -810,13 +879,12 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.13 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 136.12 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
 
 leaves_input, pt_input_list, custom_tasks_input, fixed_main_tasks_input, fix_breaks_input, sick_people_input = {}, [], {}, {}, {}, []
-off_morning_input, off_evening_input = [], []
 
 if "schedule_df" not in st.session_state: st.session_state.schedule_df = None
 if "run_status" not in st.session_state: st.session_state.run_status = None
@@ -890,10 +958,10 @@ with st.sidebar:
         for i in range(5):
             st.markdown(f"**PT คนที่ {i+1}**")
             pt_name = st.text_input("ชื่อ PT", key=f"pt_n_{i}", label_visibility="collapsed", placeholder="ระบุชื่อ (ถ้ามี)")
-            cc1, cc2 = st.columns(2)
+            cc1, cc2, cc3 = st.columns([2, 2, 2])
             with cc1: pt_s = st.selectbox("เริ่ม", VALID_TIMES, key=f"pt_s_{i}")
             with cc2: pt_e = st.selectbox("สิ้นสุด", VALID_TIMES, key=f"pt_e_{i}")
-            pt_b = st.checkbox("พัก 12.30", key=f"pt_b_{i}")
+            with cc3: pt_b = st.checkbox("พัก 12.30", key=f"pt_b_{i}")
             st.divider()
             if pt_name.strip() != "":
                 if VALID_TIMES.index(pt_s) < VALID_TIMES.index(pt_e):
@@ -901,34 +969,7 @@ with st.sidebar:
                 else:
                     st.error(f"เวลาเข้างานของ PT คนที่ {i+1} ผิดพลาด")
 
-    st.subheader("🌅 ออกเวรดึก (พักช่วงเช้า)")
-    with st.expander("คลิกเพื่อระบุผู้ที่ออกเวรดึก (สูงสุด 5 คน)", expanded=False):
-        for i in range(5):
-            st.markdown(f"**คนที่ {i+1}**")
-            p_m_off = st.selectbox("ชื่อ", dropdown_names, key=f"moff_name_{i}", label_visibility="collapsed")
-            c1, c2 = st.columns(2)
-            with c1: s_m_off = st.selectbox("เริ่ม", VALID_TIMES, key=f"moff_s_{i}")
-            with c2: e_m_off = st.selectbox("สิ้นสุด", VALID_TIMES, key=f"moff_e_{i}")
-            st.divider()
-            if p_m_off != "ไม่มี":
-                if VALID_TIMES.index(s_m_off) < VALID_TIMES.index(e_m_off):
-                    off_morning_input.append({"name": p_m_off, "start": s_m_off, "end": e_m_off})
-                else:
-                    st.error(f"เวลาเริ่ม-สิ้นสุดของคนที่ {i+1} ผิดพลาด")
-
-    st.subheader("🌇 ออกเวรเย็น")
-    with st.expander("คลิกเพื่อระบุรอบออกเวรเย็น (สูงสุด 20 คน)", expanded=False):
-        evening_choices = ["15.00 - 15.30", "15.30 - 16.00", "16.00 - 16.30"]
-        for i in range(20):
-            st.markdown(f"**คนที่ {i+1}**")
-            c1, c2 = st.columns([2, 3])
-            with c1: p_e_off = st.selectbox("ชื่อ", dropdown_names, key=f"eoff_name_{i}", label_visibility="collapsed")
-            with c2: t_e_off = st.selectbox("รอบพัก", evening_choices, key=f"eoff_time_{i}", label_visibility="collapsed")
-            st.divider()
-            if p_e_off != "ไม่มี":
-                off_evening_input.append({"name": p_e_off, "time": t_e_off})
-
-    st.subheader("📋 ภารกิจพิเศษ (อื่นๆ)")
+    st.subheader("📋 ภารกิจพิเศษ")
     with st.expander("คลิกเพื่อระบุภารกิจพิเศษ (สูงสุด 30 งาน)", expanded=False):
         for i in range(30):
             st.markdown(f"**งานที่ {i+1}**")
@@ -943,13 +984,6 @@ with st.sidebar:
                     custom_tasks_input[(p_task, s_task, e_task)] = n_task.strip()
                 else:
                     st.error(f"เวลาเริ่ม-สิ้นสุดของงานที่ {i+1} ผิดพลาด")
-
-    # ผสมข้อมูล ออกเวรดึก/ออกเวรเย็น เข้าไปใน custom_tasks_input ก่อนประมวลผล
-    for item in off_morning_input:
-        custom_tasks_input[(item['name'], item['start'], item['end'])] = "ออกเวรดึก"
-    for item in off_evening_input:
-        s_e, e_e = item['time'].split(" - ")
-        custom_tasks_input[(item['name'], s_e, e_e)] = "ออกเวรเย็น"
 
     st.subheader("📌 ล็อกภาระงานหลัก")
     with st.expander("คลิกเพื่อล็อกภาระงานหลัก (สูงสุด 30 รายการ)", expanded=False):
@@ -993,9 +1027,7 @@ with st.sidebar:
     current_settings = {
         "leaves": [{"name": p, "type": t} for p, t in leaves_input.items()],
         "pt": pt_input_list,
-        "tasks": [{"name": k[0], "start": k[1], "end": k[2], "task": v} for k, v in custom_tasks_input.items() if v not in ["ออกเวรดึก", "ออกเวรเย็น"]],
-        "off_morning": off_morning_input,
-        "off_evening": off_evening_input,
+        "tasks": [{"name": k[0], "start": k[1], "end": k[2], "task": v} for k, v in custom_tasks_input.items()],
         "fixed": [{"name": k[0], "start": k[1], "end": k[2], "task": list(maps.keys())[list(maps.values()).index(v)]} for k, v in fixed_main_tasks_input.items()],
         "sick": [{"name": p} for p in sick_people_input],
         "breaks": [{"name": p, "break": break_choices[b]} for p, b in fix_breaks_input.items()]
