@@ -248,7 +248,7 @@ def time_to_slot(t_str): return VALID_TIMES.index(t_str)
 
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
     
-    ft_pharmacists = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
+    ft_pharmacists = ['เต้น', 'แอน', 'กอล์ฟ', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'ปอนด์', 'เบ๊บ', 'จินนี่']
     head_pharmacists = ['กอล์ฟ', 'มุก'] 
     
     pt_pharmacists = [pt['name'] for pt in PART_TIME]
