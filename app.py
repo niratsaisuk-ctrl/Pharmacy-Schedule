@@ -148,7 +148,7 @@ def save_template(template_name, settings_data):
         worksheet.update([["Data JSON"], [json.dumps(settings_data, ensure_ascii=False)]])
         return True, f"บันทึกเทมเพลต '{template_name}' สำเร็จ!"
     except Exception as e:
-        return False, f"บันทึกล้มเหลว: {str(e)}"
+        return False, f"บันทึล้มเหลว: {str(e)}"
 
 def load_template(template_name):
     sheet_file, msg = connect_to_gsheet()
@@ -396,7 +396,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
 
-    # === LOGIC ของ V136.12/137.0 สำหรับ Part-Time ===
+    # === LOGIC ของ V138.0 สำหรับ Part-Time ===
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
@@ -417,23 +417,52 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         is_group_a = (pt['start'] == "09.30" and pt['end'] in ["16.00", "16.30"])
         is_group_b = (pt['start'] in ["10.30", "11.00", "11.30", "12.00", "12.30"] and pt['end'] in ["16.00", "16.30"])
         is_group_c = (pt['start'] in ["13.00", "13.30"] and pt['end'] in ["16.00", "16.30"])
-        is_group_d = (pt['start'] == "09.30" and pt['end'] in ["13.00", "13.30"]) # 🌟 อัปเกรด Pattern กลุ่ม D ให้เป๊ะ
+        is_group_d = (pt['start'] == "09.30" and pt['end'] in ["13.00", "13.30"]) 
         is_group_e = (pt['start'] == "09.00" and pt['end'] == "14.30")
         is_group_f = (pt['start'] == "10.00" and pt['end'] in ["16.00", "16.30"] and not pt.get('has_break', True))
         is_group_g = (pt['start'] == "10.00" and pt['end'] in ["16.00", "16.30"] and pt.get('has_break', True)) 
 
-        if pt['has_break'] and not (is_group_c or is_group_d or is_group_e or is_group_g):
+        if pt['has_break'] and not (is_group_a or is_group_c or is_group_d or is_group_e or is_group_g):
             if s_idx <= 8 and e_idx > 8:
                 model.Add(x[p, 8, 'พัก'] == 1) 
                 if e_idx > 9: model.Add(x[p, 9, 'Matching'] == 1) 
                     
         for t in range(16):
-            if not (pt['has_break'] and not (is_group_c or is_group_d or is_group_e) and t == 8): 
-                if not is_group_g and not is_group_d: 
+            if not (pt['has_break'] and not (is_group_a or is_group_c or is_group_d or is_group_e) and t == 8): 
+                if not is_group_a and not is_group_g and not is_group_d: 
                     model.Add(x[p, t, 'พัก'] == 0)
 
         if is_group_a: 
-            model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 8)
+            # 🌟 V138.0: Fix Pattern 9.30-16.30 ให้เป๊ะตามกฎสลับชั่วโมง
+            # 09.30 - 10.30
+            model.Add(sum(x[p, 2, task] for task in my_dispense_allowed) == 1)
+            model.Add(sum(x[p, 3, task] for task in my_dispense_allowed) == 1)
+            # 10.30 - 11.30
+            model.Add(x[p, 4, 'Matching'] == 1)
+            model.Add(x[p, 5, 'Matching'] == 1)
+            # 11.30 - 12.30
+            model.Add(sum(x[p, 6, task] for task in my_dispense_allowed) == 1)
+            model.Add(sum(x[p, 7, task] for task in my_dispense_allowed) == 1)
+            # 12.30 - 13.00 (พัก)
+            if pt.get('has_break', True):
+                model.Add(x[p, 8, 'พัก'] == 1)
+                model.Add(x[p, 9, 'Matching'] == 1)
+                for t in range(16):
+                    if t != 8: model.Add(x[p, t, 'พัก'] == 0)
+            else:
+                model.Add(sum(x[p, 8, task] for task in my_dispense_allowed) == 1)
+                model.Add(sum(x[p, 9, task] for task in my_dispense_allowed) == 1)
+                for t in range(16): model.Add(x[p, t, 'พัก'] == 0)
+            # 13.30 - 14.30
+            model.Add(sum(x[p, 10, task] for task in my_dispense_allowed) == 1)
+            model.Add(sum(x[p, 11, task] for task in my_dispense_allowed) == 1)
+            # 14.30 - 15.30
+            model.Add(x[p, 12, 'Matching'] == 1)
+            model.Add(x[p, 13, 'Matching'] == 1)
+            # 15.30 - 16.30
+            if e_idx >= 15: model.Add(sum(x[p, 14, task] for task in my_dispense_allowed) == 1)
+            if e_idx == 16: model.Add(sum(x[p, 15, task] for task in my_dispense_allowed) == 1)
+
         elif is_group_b: 
             model.Add(sum(x[p, t, task] for t in range(16) for task in my_dispense_allowed) == 6)
         elif is_group_c: 
@@ -449,7 +478,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t_idx in [5, 6]: reward_vars.append(x[p, t_idx, 'Matching'] * 300000)
             
         elif is_group_d:
-            # 🌟 V137.0: กำหนดแพทเทิร์น PT เข้างาน 9.30-13.30 เป๊ะๆ
             model.Add(x[p, 2, 'Matching'] == 1) # 09.30
             model.Add(x[p, 3, 'Matching'] == 1) # 10.00
             model.Add(sum(x[p, 4, task] for task in my_dispense_allowed) == 1) # 10.30
@@ -460,7 +488,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, 8, task] for task in my_dispense_allowed) == 1) # 12.30
             if e_idx > 9:
                 model.Add(sum(x[p, 9, task] for task in my_dispense_allowed) == 1) # 13.00
-            for t in range(16): model.Add(x[p, t, 'พัก'] == 0) # กลุ่ม D ไม่บังคับพัก
+            for t in range(16): model.Add(x[p, t, 'พัก'] == 0)
 
         elif is_group_g:
             model.Add(sum(x[p, 3, task] for task in my_dispense_allowed) == 1)
@@ -479,7 +507,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t in range(16):
                 if t != 8: model.Add(x[p, t, 'พัก'] == 0)
 
-        if len(PART_TIME) <= 2 and not is_group_g and not is_group_d:
+        if len(PART_TIME) <= 2 and not is_group_a and not is_group_g and not is_group_d:
             for t in range(max(s_idx, e_idx - 2), e_idx):
                 if 0 <= t < 16:
                     model.Add(sum(x[p, t, task] for task in my_dispense_allowed) == 1)
@@ -499,7 +527,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         model.AddAbsEquality(abs_diff_78, diff_78)
         reward_vars.append(abs_diff_78 * -30000)
 
-    # 🌟 V137.0: บังคับ PT ทุกคนห้ามทำ Matching ติดกันเกิน 1 ชั่วโมง (3 สล็อตขึ้นไป)
     for p in pt_pharmacists:
         for t in range(14):
             model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
@@ -516,7 +543,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         
         if p in full_day_active_ft:
             if p in head_pharmacists:
-                # === LOGIC ของ V136.12 สำหรับหัวหน้าห้องยา ===
                 break_sum = sum(x[p, t, 'พัก'] for t in range(16))
                 model.Add(break_sum <= 2)
                 reward_vars.append(break_sum * 100000) 
@@ -637,33 +663,30 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     for p in pt_pharmacists:
         is_group_g = False
         is_group_d = False
+        is_group_a = False
         for pt_dict in PART_TIME:
             if pt_dict['name'] == p:
                 if pt_dict['start'] == "10.00" and pt_dict['end'] in ["16.00", "16.30"] and pt_dict.get('has_break', True):
                     is_group_g = True
                 if pt_dict['start'] == "09.30" and pt_dict['end'] in ["13.00", "13.30"]:
                     is_group_d = True
+                if pt_dict['start'] == "09.30" and pt_dict['end'] in ["16.00", "16.30"]:
+                    is_group_a = True
         
-        if not is_group_g and not is_group_d: 
-            p = pt['name']
+        if not is_group_g and not is_group_d and not is_group_a: 
             for t in range(15):
                 match_pair_pt = model.NewBoolVar(f'pair_matching_pt_{p}_{t}')
                 model.AddImplication(match_pair_pt, x[p, t, 'Matching'])
                 model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
                 reward_vars.append(match_pair_pt * 150000) 
 
-    # === LOGIC ของ V136.12 สำหรับ Full-Time ===
-    is_disp_7_vars = []
+    # === LOGIC ของ V138.0 สำหรับ Full-Time ===
     for p in ft_pharmacists:
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
-            over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
             
-            # อนุญาต 3.5 ชม. ตาม V136.12
-            model.Add(tot_disp <= 6 + over_3hr_var)
-            model.Add(tot_disp <= 7) 
-            reward_vars.append(over_3hr_var * -500000) 
-            is_disp_7_vars.append(over_3hr_var)
+            # 🌟 กฎใหม่ V138.0: บังคับจ่ายยาไม่เกิน 3 รอบ (6 ช่อง) เด็ดขาด 100%
+            model.Add(tot_disp <= 6)
             
             if p in active_ft and p not in SICK_PEOPLE:
                 has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
@@ -677,10 +700,10 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(short_disp >= 0)
                 reward_vars.append(short_disp * -500000) 
 
-                under_avg = model.NewIntVar(0, 16, f'under_avg_{p}')
-                model.Add(under_avg >= 5 - tot_disp)
-                model.Add(under_avg >= 0)
-                reward_vars.append(under_avg * -10000) 
+            under_avg = model.NewIntVar(0, 16, f'under_avg_{p}')
+            model.Add(under_avg >= 5 - tot_disp)
+            model.Add(under_avg >= 0)
+            reward_vars.append(under_avg * -10000) 
 
             for d in ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
             for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_10', 'จ่ายยา_11']:
@@ -689,9 +712,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(over_d >= total_d - 2)
                 model.Add(over_d >= 0) 
                 reward_vars.append(over_d * -2500) 
-
-            model.Add(sum(x[p, t, 'Ver_2'] for t in range(16)) <= 4)
-            for v in ['Ver_1', 'Ver_3']: model.Add(sum(x[p, t, v] for t in range(16)) <= 2)
 
             done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
             model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
@@ -703,8 +723,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(done_disp_7 + done_disp_8 <= 1)
 
             model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 2)
-
-    model.Add(sum(is_disp_7_vars) <= 2) 
 
     for p in all_pharmacists:
         for t in range(14):
@@ -878,16 +896,16 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
             if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFE6CC' 
-            if t_idx in [2]: return '#FFF2CC'                 
-            if t_idx in [5, 6, 9, 10]: return '#F8CECC'         
-            if t_idx in [7, 8]: return '#E1D5E7'              
+            if t_idx in [2]: return '#FFF2CC'                  
+            if t_idx in [5, 6, 9, 10]: return '#F8CECC'          
+            if t_idx in [7, 8]: return '#E1D5E7'               
             if t_idx in [13, 14, 15]: return '#DAE8FC'          
         else: 
             if t_idx in [0, 1, 4, 5, 12, 13]: return '#FFE6CC' 
-            if t_idx in [2, 3]: return '#FFF2CC'              
+            if t_idx in [2, 3]: return '#FFF2CC'               
             if t_idx in [6, 7, 10, 11]: return '#F8CECC'        
-            if t_idx in [8, 9]: return '#E1D5E7'              
-            if t_idx in [14, 15]: return '#DAE8FC'              
+            if t_idx in [8, 9]: return '#E1D5E7'               
+            if t_idx in [14, 15]: return '#DAE8FC'               
         return '#FFFFFF'
 
     cols = df.columns.tolist()
@@ -917,7 +935,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 137.0 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 138.0 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'กอล์ฟ', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'ปอนด์', 'เบ๊บ', 'จินนี่']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
