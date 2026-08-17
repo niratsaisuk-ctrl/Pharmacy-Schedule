@@ -259,7 +259,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     else: break_slots, b_groups = [5, 6, 7, 8, 9, 10], [(5,7), (7,9), (9,11)]
 
     # ------------------------------------------------------------------
-    # 🚨 PRE-FLIGHT CONFLICT CHECKER (อัปเดต V138.1 แบบยืดหยุ่น)
+    # 🚨 PRE-FLIGHT CONFLICT CHECKER
     # ------------------------------------------------------------------
     error_msgs = []
     
@@ -294,8 +294,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             fixed_slots_check[(p, t)] = t_name
 
     for t in range(16):
-        # 🌟 V138.1: ขั้นต่ำสุดที่รับได้ (Ver1-3, PS1, Match+C) = 5 ช่อง + (จ่าย 6,7,8) = 3 ช่อง รวม 8 คน 
-        # (ถ้าไม่ใช่เวลาพัก ต้องเพิ่ม PS2 อีก 1 ช่อง รวมเป็น 9 คน)
         req_count = 9 if t not in break_slots else 8
         
         available_people = 0
@@ -396,7 +394,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     reward_vars = []
 
-    # === LOGIC ของ V138.1 สำหรับ Part-Time ===
+    # === LOGIC สำหรับ Part-Time ===
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
@@ -433,17 +431,12 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                     model.Add(x[p, t, 'พัก'] == 0)
 
         if is_group_a: 
-            # 🌟 V138.1: Fix Pattern 9.30-16.30 ให้เป๊ะตามกฎสลับชั่วโมง
-            # 09.30 - 10.30
             model.Add(sum(x[p, 2, task] for task in my_dispense_allowed) == 1)
             model.Add(sum(x[p, 3, task] for task in my_dispense_allowed) == 1)
-            # 10.30 - 11.30
             model.Add(x[p, 4, 'Matching'] == 1)
             model.Add(x[p, 5, 'Matching'] == 1)
-            # 11.30 - 12.30
             model.Add(sum(x[p, 6, task] for task in my_dispense_allowed) == 1)
             model.Add(sum(x[p, 7, task] for task in my_dispense_allowed) == 1)
-            # 12.30 - 13.00 (พัก)
             if pt.get('has_break', True):
                 model.Add(x[p, 8, 'พัก'] == 1)
                 model.Add(x[p, 9, 'Matching'] == 1)
@@ -453,13 +446,10 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, 8, task] for task in my_dispense_allowed) == 1)
                 model.Add(sum(x[p, 9, task] for task in my_dispense_allowed) == 1)
                 for t in range(16): model.Add(x[p, t, 'พัก'] == 0)
-            # 13.30 - 14.30
             model.Add(sum(x[p, 10, task] for task in my_dispense_allowed) == 1)
             model.Add(sum(x[p, 11, task] for task in my_dispense_allowed) == 1)
-            # 14.30 - 15.30
             model.Add(x[p, 12, 'Matching'] == 1)
             model.Add(x[p, 13, 'Matching'] == 1)
-            # 15.30 - 16.30
             if e_idx >= 15: model.Add(sum(x[p, 14, task] for task in my_dispense_allowed) == 1)
             if e_idx == 16: model.Add(sum(x[p, 15, task] for task in my_dispense_allowed) == 1)
 
@@ -478,16 +468,16 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             for t_idx in [5, 6]: reward_vars.append(x[p, t_idx, 'Matching'] * 300000)
             
         elif is_group_d:
-            model.Add(x[p, 2, 'Matching'] == 1) # 09.30
-            model.Add(x[p, 3, 'Matching'] == 1) # 10.00
-            model.Add(sum(x[p, 4, task] for task in my_dispense_allowed) == 1) # 10.30
-            model.Add(sum(x[p, 5, task] for task in my_dispense_allowed) == 1) # 11.00
-            model.Add(x[p, 6, 'Matching'] == 1) # 11.30
-            model.Add(x[p, 7, 'Matching'] == 1) # 12.00
+            model.Add(x[p, 2, 'Matching'] == 1) 
+            model.Add(x[p, 3, 'Matching'] == 1) 
+            model.Add(sum(x[p, 4, task] for task in my_dispense_allowed) == 1) 
+            model.Add(sum(x[p, 5, task] for task in my_dispense_allowed) == 1) 
+            model.Add(x[p, 6, 'Matching'] == 1) 
+            model.Add(x[p, 7, 'Matching'] == 1) 
             if e_idx > 8:
-                model.Add(sum(x[p, 8, task] for task in my_dispense_allowed) == 1) # 12.30
+                model.Add(sum(x[p, 8, task] for task in my_dispense_allowed) == 1) 
             if e_idx > 9:
-                model.Add(sum(x[p, 9, task] for task in my_dispense_allowed) == 1) # 13.00
+                model.Add(sum(x[p, 9, task] for task in my_dispense_allowed) == 1) 
             for t in range(16): model.Add(x[p, t, 'พัก'] == 0)
 
         elif is_group_g:
@@ -599,19 +589,14 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
         model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
 
-        # 🌟 V138.1: ระบบยืดหยุ่นช่องจ่ายยา (Flexible Core Tasks)
-        # ขั้นต่ำที่ต้องมีเสมอ (คนไม่พอก็ต้องเปิดช่องพวกนี้ให้ได้)
         req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
         for task in req_core: 
             model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
-        # ช่องจ่ายยาที่ "ยืดหยุ่นได้" (ถ้าคนไม่พอ จะถูกยุบอัตโนมัติ ไม่ขึ้น Error)
         for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_9', 'จ่ายยา_10', 'จ่ายยา_11']:
             model.Add(sum(x[p, t, d] for p in all_pharmacists) <= 1)
 
-        # จัดการการปิดช่องตามช่วงเวลา
         if t < 2:
-            # เช้า 8.30-9.30 ปิดช่อง 4,5,10,11 ถาวร (เปิดได้แค่ 6,7,8 + 9ถ้าคนพอ)
             model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
             model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) == 0)
             model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) == 0)
@@ -628,7 +613,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for i in range(2, 10): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
         for i in range(4, 10): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
         
-        # กฎการเปิดช่องจ่ายยาตามลำดับ (ถ้าคนไม่พอ จะค่อยๆ ยุบ 11 -> 4 -> 10 -> 5 -> 9)
         model.Add(sum(x[p, t, 'จ่ายยา_8'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_7'] for p in all_pharmacists))
         model.Add(sum(x[p, t, 'จ่ายยา_6'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_8'] for p in all_pharmacists))
         model.Add(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_6'] for p in all_pharmacists))
@@ -677,12 +661,44 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 model.AddImplication(match_pair_pt, x[p, t+1, 'Matching'])
                 reward_vars.append(match_pair_pt * 150000) 
 
-    # === LOGIC ของ V138.1 สำหรับ Full-Time ===
+    # 🌟 V138.2: 1. กฎเหล็ก: ในแต่ละวันแต่ละคนทำ Ver_1 และ Ver_3 ได้แค่ 1 ครั้ง (1 Block) เท่านั้น
+    for p in all_pharmacists:
+        for v_task in ['Ver_1', 'Ver_3']:
+            starts = []
+            for t in range(16):
+                start_var = model.NewBoolVar(f'start_{v_task}_{p}_{t}')
+                prev = x[p, t-1, v_task] if t > 0 else 0
+                model.Add(x[p, t, v_task] - prev <= start_var)
+                starts.append(start_var)
+            model.Add(sum(starts) <= 1)
+
+    # 🌟 V138.2: 2. กฎยืดหยุ่น (Soft): พยายามเกลี่ยให้เภสัชกร FT ได้ทำทั้ง Ver CPOE และ Ver PS ในแต่ละวัน
+    for p in ft_pharmacists:
+        if p not in head_pharmacists:
+            has_cpoe = model.NewBoolVar(f'has_cpoe_{p}')
+            has_ps = model.NewBoolVar(f'has_ps_{p}')
+            
+            sum_cpoe = sum(x[p, t, task] for t in range(16) for task in ver_cpoe_tasks)
+            sum_ps = sum(x[p, t, task] for t in range(16) for task in ver_ps_tasks)
+            
+            model.Add(sum_cpoe > 0).OnlyEnforceIf(has_cpoe)
+            model.Add(sum_cpoe == 0).OnlyEnforceIf(has_cpoe.Not())
+            
+            model.Add(sum_ps > 0).OnlyEnforceIf(has_ps)
+            model.Add(sum_ps == 0).OnlyEnforceIf(has_ps.Not())
+            
+            has_both = model.NewBoolVar(f'has_both_ver_{p}')
+            model.AddImplication(has_both, has_cpoe)
+            model.AddImplication(has_both, has_ps)
+            
+            # โบนัสก้อนใหญ่ถ้าสามารถเกลี่ยให้ทำได้ทั้ง 2 ระบบ (ถ้าคนขาดหรือไม่ลงตัว จะถูกเพิกเฉยอัตโนมัติ)
+            reward_vars.append(has_both * 200000)
+
+    # === LOGIC สำหรับ Full-Time ===
     for p in ft_pharmacists:
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
             
-            # 🌟 กฎเหล็ก: บังคับจ่ายยาไม่เกิน 3 รอบ (6 ช่อง) ต่อวัน เด็ดขาด
             model.Add(tot_disp <= 6)
             
             if p in active_ft and p not in SICK_PEOPLE:
@@ -773,7 +789,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         for t in range(16): reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
 
     for t in range(16):
-        # คะแนนความสำคัญของงาน (ถ้าคนพอ AI จะแย่งกันเติมงานที่มีคะแนนเยอะสุดก่อน)
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
             'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
@@ -782,7 +797,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             'Ver_5': 46000, 'PS_4': 44000, 
             'Ver_6': 42000, 'PS_5': 40000, 'Ver_7': 38000, 'PS_6': 36000, 
             'Ver_8': 34000, 'PS_7': 32000, 'Ver_9': 30000, 'PS_8': 28000, 
-            'Ver_10': 26000, 'PS_9': 24000, 'PS_10': 22000
+            'Ver_10': 26000, 'PS_9': 24000, 'PS_10': 22000,
+            'Ver_1': 85000, 'Ver_2': 80000, 'Ver_3': 75000, 
+            'PS_1': 70000, 'PS_2': 65000, 'Match_C': 60000, 'Matching': 20000
         }
         if IS_MWF and (t in break_slots):
             weights['จ่ายยา_4'] = -50000 
@@ -933,7 +950,7 @@ st.markdown("<style>.block-container { padding-top: 1.5rem !important; padding-b
 
 st.title("💊 จัดตารางปฏิบัติงานเภสัชกร ด้วย AI")
 st.subheader("🏥 ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์ โรงพยาบาลรามาธิบดี")
-st.markdown(f"<p style='font-size: 14px; color: gray;'>version 138.1 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='font-size: 14px; color: gray;'>version 138.2 | เช็กระบบ Database: {'✅ พร้อมใช้งาน' if SHEETS_AVAILABLE else '❌ ไม่พร้อมใช้งาน'} พัฒนาโดย Niratsai Sukprasert และ Gemini</p>", unsafe_allow_html=True)
 
 ft_pharmacists_list = ['เต้น', 'แอน', 'กอล์ฟ', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'ปอนด์', 'เบ๊บ', 'จินนี่']
 dropdown_names = ["ไม่มี"] + ft_pharmacists_list
